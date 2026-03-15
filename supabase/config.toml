@@ -1,0 +1,25 @@
+project_id = "adrucmfpqonloiydooqy"
+
+[functions.chatbot]
+verify_jwt = false
+
+[functions.create-checkout]
+verify_jwt = true
+
+[functions.send-email]
+verify_jwt = false
+
+[functions.verify-payment]
+verify_jwt = false
+
+[functions.recommend-containers]
+verify_jwt = false
+
+[functions.notify-high-utilization]
+verify_jwt = false
+
+[functions.predict-delay]
+verify_jwt = false
+
+[functions.predict-weather]
+verify_jwt = false
