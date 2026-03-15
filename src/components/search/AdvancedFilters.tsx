@@ -29,7 +29,7 @@ interface FilterState {
   arrivalEnd: string;
   refrigerated: boolean;
   hazmatApproved: boolean;
-  verified ProvidersOnly: boolean;
+  verifiedProvidersOnly: boolean;
   minRating: number;
 }
 
