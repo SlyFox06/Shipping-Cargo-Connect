@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import {
   optimizeCargo,
+  optimizeCargoAI,
   toOptimizerContainer,
   type CargoItem,
   type OptimizationResult,
@@ -10,7 +11,7 @@ interface UseCargoOptimizerResult {
   result: OptimizationResult | null;
   loading: boolean;
   error: string | null;
-  optimize: (cargoItems: CargoItem[], containers: any[], origin: string, destination: string) => void;
+  optimize: (cargoItems: CargoItem[], containers: any[], origin: string, destination: string, useAI?: boolean) => Promise<void>;
   reset: () => void;
 }
 
@@ -20,7 +21,7 @@ export function useCargoOptimizer(): UseCargoOptimizerResult {
   const [error, setError] = useState<string | null>(null);
 
   const optimize = useCallback(
-    (cargoItems: CargoItem[], rawContainers: any[], origin: string, destination: string) => {
+    async (cargoItems: CargoItem[], rawContainers: any[], origin: string, destination: string, useAI = false) => {
       setLoading(true);
       setError(null);
       try {
@@ -28,7 +29,14 @@ export function useCargoOptimizer(): UseCargoOptimizerResult {
         if (!rawContainers.length) throw new Error('No containers available to optimize against.');
 
         const containers = rawContainers.map(toOptimizerContainer);
-        const optimized = optimizeCargo(cargoItems, containers, origin, destination);
+        
+        let optimized;
+        if (useAI) {
+          optimized = await optimizeCargoAI(cargoItems, containers, origin, destination);
+        } else {
+          optimized = optimizeCargo(cargoItems, containers, origin, destination);
+        }
+        
         setResult(optimized);
       } catch (err: any) {
         setError(err.message || 'Optimization failed');

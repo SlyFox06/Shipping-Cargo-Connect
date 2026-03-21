@@ -16,7 +16,7 @@ export const useDelayPrediction = () => {
   const predictDelay = async (containerId: string, route: string, departureDate: string) => {
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('predict-delay', {
+      const { data, error } = await supabase.functions.invoke('delay-prediction', {
         body: { 
           containerId, 
           route,

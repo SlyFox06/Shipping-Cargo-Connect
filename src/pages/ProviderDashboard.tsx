@@ -7,6 +7,8 @@ import { Plus, Package, TrendingUp, DollarSign, AlertCircle } from "lucide-react
 import { supabase } from "@/integrations/supabase/client";
 import { getUserRole } from "@/lib/auth";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { HotRoutes } from "@/components/analytics/HotRoutes";
+import { RevenueForecast } from "@/components/analytics/RevenueForecast";
 
 const ProviderDashboard = () => {
   const navigate = useNavigate();
@@ -242,6 +244,12 @@ const ProviderDashboard = () => {
               </div>
             </div>
           </Card>
+        </div>
+
+        {/* AI Analytics Section */}
+        <div className="grid md:grid-cols-2 gap-6">
+          <HotRoutes />
+          <RevenueForecast />
         </div>
 
         {/* Quick Actions */}

@@ -1,6 +1,24 @@
 project_id = "adrucmfpqonloiydooqy"
 
-[functions.chatbot]
+[functions.predict-price-ai]
+verify_jwt = false
+
+[functions.cargo-split]
+verify_jwt = false
+
+[functions.route-optimize]
+verify_jwt = false
+
+[functions.document-verify]
+verify_jwt = false
+
+[functions.demand-forecast]
+verify_jwt = false
+
+[functions.revenue-forecast]
+verify_jwt = false
+
+[functions.ai-assistant]
 verify_jwt = false
 
 [functions.create-checkout]
@@ -18,7 +36,7 @@ verify_jwt = false
 [functions.notify-high-utilization]
 verify_jwt = false
 
-[functions.predict-delay]
+[functions.delay-prediction]
 verify_jwt = false
 
 [functions.predict-weather]

@@ -3,6 +3,7 @@
  * Uses a structured prompt template with rule-based AI logic to optimally
  * split cargo across available containers.
  */
+import { supabase } from "@/integrations/supabase/client";
 
 export interface CargoItem {
   name: string;
@@ -22,6 +23,8 @@ export interface AvailableContainer {
   maxWeightKg: number;
   maxVolumeCBM: number;
   pricePerCBM: number;
+  departureDate?: string;
+  arrivalDate?: string;
   hasReefer?: boolean;
   hasHazmat?: boolean;
   hasFragileHandling?: boolean;
@@ -105,6 +108,23 @@ export function optimizeCargo(
   origin: string,
   destination: string
 ): OptimizationResult {
+  // 0. Filter containers strictly by route
+  const relevantContainers = availableContainers.filter(
+    c => c.origin.toLowerCase() === origin.toLowerCase() && 
+         c.destination.toLowerCase() === destination.toLowerCase()
+  );
+
+  if (relevantContainers.length === 0) {
+    return {
+      splits: [],
+      unallocated: cargoItems.map(i => i.name),
+      costEstimate: 0,
+      savingsVsSingleContainer: 0,
+      recommendation: "No containers found matching this specific route.",
+      success: false
+    };
+  }
+
   // 1. Separate DG / perishables first — they need dedicated containers
   const dgItems = cargoItems.filter(i => i.isDangerousGoods || i.category === 'chemicals');
   const reeferItems = cargoItems.filter(i => i.isPerishable || i.category === 'perishables');
@@ -114,7 +134,7 @@ export function optimizeCargo(
   );
 
   // Sort containers by cost efficiency (cheapest per CBM first)
-  const sorted = [...availableContainers].sort(
+  const sorted = [...relevantContainers].sort(
     (a, b) => a.pricePerCBM - b.pricePerCBM
   );
 
@@ -255,8 +275,39 @@ export function toOptimizerContainer(c: any): AvailableContainer {
     maxWeightKg: c.capacity_kg || c.available_weight_kg || 25000,
     maxVolumeCBM: c.total_volume_m3 || c.available_volume_m3 || 67,
     pricePerCBM: c.price_per_m3 || (c.price_usd / (c.total_volume_m3 || 67)),
+    departureDate: c.departure_date,
+    arrivalDate: c.arrival_date,
     hasReefer: c.container_type?.includes('refrigerated'),
     hasHazmat: c.hazmat_approved || false,
     hasFragileHandling: c.fragile_handling || false,
   };
+}
+
+/**
+ * AI Optimizer (Claude Mode)
+ * Calls the Supabase Edge Function which uses Anthropic Claude 3.5 Sonnet
+ * for deep logistics reasoning.
+ */
+export async function optimizeCargoAI(
+  cargoItems: CargoItem[],
+  availableContainers: AvailableContainer[],
+  origin: string,
+  destination: string
+): Promise<OptimizationResult> {
+  try {
+    const { data, error } = await supabase.functions.invoke('route-optimize', {
+      body: { cargoItems, containers: availableContainers, origin, destination },
+    });
+
+    if (error) throw error;
+    return { ...data, success: true };
+  } catch (error: any) {
+    console.error('Claude optimization error:', error);
+    // Fallback to local optimization if AI fails
+    const localResult = optimizeCargo(cargoItems, availableContainers, origin, destination);
+    return {
+      ...localResult,
+      recommendation: `⚠️ AI Suggestion failed (using rule-based fallback): ${localResult.recommendation}`,
+    };
+  }
 }

@@ -25,7 +25,13 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { useCargoOptimizer } from "@/hooks/useCargoOptimizer";
+import { useCargoSplit, type CargoItem as AIItem } from "@/hooks/useCargoSplit";
 import type { CargoItem } from "@/services/cargoOptimizationService";
+import { format, addDays } from "date-fns";
+import { Calendar as CalendarIcon } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import { cn } from "@/lib/utils";
 
 type CargoCategory = CargoItem["category"];
 
@@ -59,8 +65,14 @@ export const AICargoOptimizer = ({
   origin,
   destination,
 }: AICargoOptimizerProps) => {
-  const { result, loading, error, optimize, reset } = useCargoOptimizer();
+  const { result: manualResult, loading: manualLoading, error: manualError, optimize: optimizeManual, reset: resetManual } = useCargoOptimizer();
+  const { splitCargo, result: aiResult, loading: aiLoading, error: aiError, reset: resetAI } = useCargoSplit();
+  
   const [expanded, setExpanded] = useState(true);
+  const [useAI, setUseAI] = useState(false);
+  const [requiredArrivalDate, setRequiredArrivalDate] = useState<Date>(addDays(new Date(), 14));
+  const [manualOrigin, setManualOrigin] = useState(origin || "");
+  const [manualDestination, setManualDestination] = useState(destination || "");
   const [cargoItems, setCargoItems] = useState<CargoItem[]>([
     { name: "", weightKg: 0, volumeCBM: 0, category: "general" },
   ]);
@@ -82,10 +94,36 @@ export const AICargoOptimizer = ({
     });
   };
 
-  const handleOptimize = () => {
+  const handleOptimize = async () => {
     const valid = cargoItems.filter((i) => i.name.trim() && i.weightKg > 0 && i.volumeCBM > 0);
-    optimize(valid, availableContainers, origin, destination);
+    if (useAI) {
+      const aiItems: AIItem[] = valid.map(i => ({
+        name: i.name,
+        weightKg: i.weightKg,
+        cbm: i.volumeCBM,
+        fragile: !!i.isFragile,
+        dangerous: !!i.isDangerousGoods,
+        type: i.category === 'chemicals' ? 'chemical' : 
+              i.category === 'perishables' ? 'food' : 
+              i.category === 'electronics' ? 'electronics' :
+              i.category === 'textiles' ? 'textiles' :
+              i.category === 'machinery' ? 'machinery' : 'other'
+      }));
+      await splitCargo(aiItems, manualOrigin, manualDestination, format(requiredArrivalDate, 'yyyy-MM-dd'));
+    } else {
+      optimizeManual(valid, availableContainers, manualOrigin, manualDestination);
+    }
   };
+
+  const handleReset = () => {
+    resetManual();
+    resetAI();
+  };
+
+  const loading = manualLoading || aiLoading;
+  const error = manualError || aiError;
+  const result = useAI ? aiResult : manualResult;
+  const costValue = useAI ? (result as any)?.totalCost : (result as any)?.costEstimate;
 
   const totalWeight = cargoItems.reduce((s, i) => s + (i.weightKg || 0), 0);
   const totalVolume = cargoItems.reduce((s, i) => s + (i.volumeCBM || 0), 0);
@@ -253,13 +291,61 @@ export const AICargoOptimizer = ({
                 </Button>
               </div>
 
-              {/* Route Info */}
-              <div className="flex items-center gap-2 text-xs text-muted-foreground bg-background/30 rounded-lg p-2.5 border border-border/20">
-                <Package className="h-3.5 w-3.5 text-primary" />
-                Route: <span className="font-medium text-foreground">{origin || "—"}</span>
-                <span>→</span>
-                <span className="font-medium text-foreground">{destination || "—"}</span>
-                <span className="ml-auto">{availableContainers.length} containers available</span>
+              {/* Route Info & Delivery Deadline */}
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-3 p-3 bg-background/30 rounded-lg border border-border/20">
+                  <div className="flex items-center gap-2">
+                    <Package className="h-3.5 w-3.5 text-primary" />
+                    <span className="text-[11px] font-semibold uppercase text-muted-foreground tracking-wider">Route Configuration</span>
+                    <span className="ml-auto text-[10px] text-muted-foreground">{availableContainers.length} containers online</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground ml-1">Origin</Label>
+                      <Input 
+                        placeholder="e.g. Mumbai" 
+                        value={manualOrigin} 
+                        onChange={(e) => setManualOrigin(e.target.value)}
+                        className="h-7 text-[11px] bg-background/50 border-primary/20 focus-visible:ring-primary/30"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground ml-1">Destination</Label>
+                      <Input 
+                        placeholder="e.g. Dubai" 
+                        value={manualDestination} 
+                        onChange={(e) => setManualDestination(e.target.value)}
+                        className="h-7 text-[11px] bg-background/50 border-primary/20 focus-visible:ring-primary/30"
+                      />
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-2 text-xs text-muted-foreground bg-background/30 rounded-lg p-2.5 border border-border/20">
+                  <CalendarIcon className="h-3.5 w-3.5 text-primary" />
+                  Delivery Deadline:
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant={"ghost"}
+                        className={cn(
+                          "h-6 p-0 text-[11px] font-medium text-foreground hover:bg-transparent underline underline-offset-2",
+                          !requiredArrivalDate && "text-muted-foreground"
+                        )}
+                      >
+                        {requiredArrivalDate ? format(requiredArrivalDate, "PPP") : <span>Pick a date</span>}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <CalendarComponent
+                        mode="single"
+                        selected={requiredArrivalDate}
+                        onSelect={(date) => date && setRequiredArrivalDate(date)}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
               </div>
 
               {/* Error */}
@@ -270,19 +356,49 @@ export const AICargoOptimizer = ({
                 </Alert>
               )}
 
-              {/* Run Button */}
-              <Button
-                className="w-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white gap-2 h-10"
-                onClick={handleOptimize}
-                disabled={loading || availableContainers.length === 0}
-              >
-                {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Brain className="h-4 w-4" />
-                )}
-                {loading ? "Optimizing..." : "Run AI Cargo Optimizer"}
-              </Button>
+              {/* Run Button & AI Toggle */}
+              <div className="space-y-3">
+                <div 
+                  className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${
+                    useAI 
+                    ? "bg-orange-500/10 border-orange-500/40 shadow-[0_0_15px_rgba(249,115,22,0.1)]" 
+                    : "bg-background/40 border-border/30"
+                  }`}
+                  onClick={() => setUseAI(!useAI)}
+                >
+                  <div className="flex items-center gap-2">
+                    <div className={`p-1.5 rounded-lg ${useAI ? "bg-orange-500 text-white" : "bg-muted text-muted-foreground"}`}>
+                      <Zap className="h-3.5 w-3.5" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold">Claude Mode (Advanced AI)</p>
+                      <p className="text-[10px] text-muted-foreground">Deep logistics reasoning & date-strict splitting</p>
+                    </div>
+                  </div>
+                  <div className={`w-8 h-4 rounded-full p-0.5 transition-colors ${useAI ? "bg-orange-500" : "bg-muted"}`}>
+                    <div className={`w-3 h-3 rounded-full bg-white transition-transform ${useAI ? "translate-x-4" : "translate-x-0"}`} />
+                  </div>
+                </div>
+
+                <Button
+                  className={`w-full text-white gap-2 h-10 transition-all ${
+                    useAI 
+                    ? "bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 shadow-lg shadow-orange-500/20" 
+                    : "bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700"
+                  }`}
+                  onClick={handleOptimize}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : useAI ? (
+                    <Zap className="h-4 w-4" />
+                  ) : (
+                    <Brain className="h-4 w-4" />
+                  )}
+                  {loading ? "Reasoning..." : useAI ? "Run Claude Optimizer" : "Run AI Cargo Optimizer"}
+                </Button>
+              </div>
 
               {/* Results */}
               <AnimatePresence>
@@ -300,7 +416,7 @@ export const AICargoOptimizer = ({
                       <Card className="p-3 text-center bg-background/40">
                         <div className="flex items-center justify-center gap-1.5 mb-1">
                           <Box className="h-3.5 w-3.5 text-violet-500" />
-                          <span className="text-[11px] text-muted-foreground">Containers</span>
+                          <span className="text-[11px] text-muted-foreground">Units</span>
                         </div>
                         <p className="text-2xl font-bold text-violet-500">{result.splits.length}</p>
                       </Card>
@@ -309,7 +425,7 @@ export const AICargoOptimizer = ({
                           <DollarSign className="h-3.5 w-3.5 text-green-500" />
                           <span className="text-[11px] text-muted-foreground">Cost Est.</span>
                         </div>
-                        <p className="text-2xl font-bold text-green-500">${result.costEstimate.toLocaleString()}</p>
+                        <p className="text-2xl font-bold text-green-500">${costValue?.toLocaleString()}</p>
                       </Card>
                       <Card className="p-3 text-center bg-background/40">
                         <div className="flex items-center justify-center gap-1.5 mb-1">
@@ -321,8 +437,8 @@ export const AICargoOptimizer = ({
                     </div>
 
                     {/* Recommendation */}
-                    <Alert className={result.success ? "border-green-500/30 bg-green-500/5" : "border-amber-500/30 bg-amber-500/5"}>
-                      {result.success ? (
+                    <Alert className={(useAI ? result.unallocated.length === 0 : (result as any).success) ? "border-green-500/30 bg-green-500/5" : "border-amber-500/30 bg-amber-500/5"}>
+                      {(useAI ? result.unallocated.length === 0 : (result as any).success) ? (
                         <CheckCircle2 className="h-4 w-4 text-green-500" />
                       ) : (
                         <AlertTriangle className="h-4 w-4 text-amber-500" />
@@ -346,10 +462,10 @@ export const AICargoOptimizer = ({
                                 <div className="h-6 w-6 rounded-md bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white text-[10px] font-bold">
                                   {i + 1}
                                 </div>
-                                <div>
-                                  <p className="text-xs font-semibold capitalize">{split.containerType.replace(/_/g, " ")}</p>
+                                <div className="flex flex-col">
+                                  <p className="text-xs font-semibold capitalize">{(split as any).providerName ? `${(split as any).providerName}'s Unit` : split.containerType.replace(/_/g, " ")}</p>
                                   <p className="text-[10px] text-muted-foreground">
-                                    {split.totalWeightKg.toFixed(0)} kg · {split.totalCBM.toFixed(2)} CBM
+                                    {(split as any).departureDate ? `${format(new Date((split as any).departureDate), 'MMM d')} → ${format(new Date((split as any).arrivalDate), 'MMM d')}` : `${split.totalWeightKg.toFixed(0)} kg · ${split.totalCBM.toFixed(2)} CBM`}
                                   </p>
                                 </div>
                               </div>
@@ -362,17 +478,21 @@ export const AICargoOptimizer = ({
 
                             <Progress value={split.utilizationPercent} className="h-1.5" />
 
-                            {/* Items */}
-                            <div className="flex flex-wrap gap-1">
-                              {split.items.map((item) => (
-                                <Badge
-                                  key={item}
-                                  variant="outline"
-                                  className="text-[10px] bg-violet-500/10 border-violet-400/30 text-violet-600 dark:text-violet-400"
-                                >
-                                  {item}
-                                </Badge>
-                              ))}
+                            <div className="flex items-center justify-between">
+                                <div className="flex flex-wrap gap-1">
+                                    {split.items.map((item) => (
+                                        <Badge
+                                        key={item}
+                                        variant="outline"
+                                        className="text-[10px] bg-violet-500/10 border-violet-400/30 text-violet-600 dark:text-violet-400"
+                                        >
+                                        {item}
+                                        </Badge>
+                                    ))}
+                                </div>
+                                {useAI && (split as any).priceForSpace && (
+                                    <span className="text-xs font-bold text-green-500">${(split as any).priceForSpace.toLocaleString()}</span>
+                                )}
                             </div>
 
                             {/* Warnings */}
@@ -397,7 +517,7 @@ export const AICargoOptimizer = ({
                         <AlertTriangle className="h-4 w-4" />
                         <AlertDescription>
                           <span className="font-semibold">Could not allocate:</span>{" "}
-                          {result.unallocated.join(", ")}. Add more container capacity.
+                          {result.unallocated.join(", ")}. Add more container capacity or extend deadline.
                         </AlertDescription>
                       </Alert>
                     )}
@@ -407,7 +527,7 @@ export const AICargoOptimizer = ({
                       size="sm"
                       variant="ghost"
                       className="w-full text-muted-foreground text-xs"
-                      onClick={reset}
+                      onClick={handleReset}
                     >
                       Clear Results
                     </Button>

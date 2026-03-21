@@ -13,6 +13,7 @@ import { AIPriceForecast } from "@/components/analytics/AIPriceForecast";
 import { AuctionCard } from "@/components/trader/AuctionCard";
 import { AuctionModal } from "@/components/trader/AuctionModal";
 import { AICargoOptimizer } from "@/components/trader/AICargoOptimizer";
+import { AdvancedPriceForecast } from "@/components/analytics/AdvancedPriceForecast";
 import { Hammer } from "lucide-react";
 
 const TraderDashboard = () => {
@@ -250,17 +251,14 @@ const TraderDashboard = () => {
 
         {/* AI Insights Section */}
         <div className="grid lg:grid-cols-2 gap-6">
-          <AIPriceForecast origin="Mumbai" destination="Dubai" />
-          <Card className="p-6 bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 flex flex-col justify-center">
-            <h3 className="text-xl font-bold mb-2">Market Sentiment</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Supply for the **Indo-Arabian** routes is currently high. Global port congestion index is stable at **4.2**.
-            </p>
-            <div className="flex gap-2">
-              <Badge className="bg-success/20 text-success border-success/30">Stable Routes</Badge>
-              <Badge className="bg-primary/20 text-primary border-primary/30">Competitive Pricing</Badge>
-            </div>
-          </Card>
+          <AIPriceForecast origin={searchOrigin || "Mumbai"} destination={searchDestination || "Dubai"} />
+          <AdvancedPriceForecast 
+            origin={searchOrigin || "Mumbai"} 
+            destination={searchDestination || "Dubai"} 
+            cargoType="general" 
+            weightKg={800} 
+            cbm={3.5} 
+          />
         </div>
 
         {/* AI Cargo Optimizer */}

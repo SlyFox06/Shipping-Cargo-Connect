@@ -10,22 +10,51 @@ interface AIPriceForecastProps {
   destination: string;
 }
 
-export const AIPriceForecast = ({ origin, destination }: AIPriceForecastProps) => {
+export const AIPriceForecast = ({ origin: initialOrigin, destination: initialDestination }: AIPriceForecastProps) => {
   const [data, setData] = useState<ForecastData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentRoute, setCurrentRoute] = useState({ origin: initialOrigin, destination: initialDestination });
+  const [routes, setRoutes] = useState<{origin: string, destination: string}[]>([]);
+
+  useEffect(() => {
+    const initTicker = async () => {
+      if (!initialOrigin || !initialDestination) {
+        const activeRoutes = await priceForecastService.getActiveRoutes();
+        setRoutes(activeRoutes);
+        if (activeRoutes.length > 0) {
+          setCurrentRoute(activeRoutes[0]);
+        }
+      } else {
+        setCurrentRoute({ origin: initialOrigin, destination: initialDestination });
+      }
+    };
+    initTicker();
+  }, [initialOrigin, initialDestination]);
+
+  useEffect(() => {
+    if (routes.length > 1 && (!initialOrigin || !initialDestination)) {
+      const interval = setInterval(() => {
+        setCurrentRoute(prev => {
+          const idx = routes.findIndex(r => r.origin === prev.origin && r.destination === prev.destination);
+          const nextIdx = (idx + 1) % routes.length;
+          return routes[nextIdx];
+        });
+      }, 10000); // Cycle every 10s
+      return () => clearInterval(interval);
+    }
+  }, [routes, initialOrigin, initialDestination]);
 
   useEffect(() => {
     const fetchForecast = async () => {
+      if (!currentRoute.origin || !currentRoute.destination) return;
       setLoading(true);
-      const forecast = await priceForecastService.getForecastForRoute(origin, destination);
+      const forecast = await priceForecastService.getForecastForRoute(currentRoute.origin, currentRoute.destination);
       setData(forecast);
       setLoading(false);
     };
 
-    if (origin && destination) {
-      fetchForecast();
-    }
-  }, [origin, destination]);
+    fetchForecast();
+  }, [currentRoute.origin, currentRoute.destination]);
 
   if (loading) {
     return (
@@ -51,8 +80,11 @@ export const AIPriceForecast = ({ origin, destination }: AIPriceForecastProps) =
             AI Freight Price Forecast
             <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-tighter">AI Prediction</Badge>
           </CardTitle>
-          <p className="text-sm text-muted-foreground">
-            {origin} → {destination} (30-day projection)
+          <p className="text-sm text-muted-foreground flex items-center gap-2">
+            {currentRoute.origin} → {currentRoute.destination}
+            {routes.length > 1 && (!initialOrigin || !initialDestination) && (
+              <Badge variant="secondary" className="text-[8px] h-4 animate-pulse">Live Ticker</Badge>
+            )}
           </p>
         </div>
         <div className={`flex items-center gap-1 font-bold ${isUp ? "text-destructive" : "text-success"}`}>
@@ -61,8 +93,8 @@ export const AIPriceForecast = ({ origin, destination }: AIPriceForecastProps) =
         </div>
       </CardHeader>
       <CardContent>
-        <div className="h-60 mt-4">
-          <ResponsiveContainer width="100%" height="100%">
+        <div className="h-60 mt-4 overflow-hidden">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
             <AreaChart data={data}>
               <defs>
                 <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
@@ -112,7 +144,7 @@ export const AIPriceForecast = ({ origin, destination }: AIPriceForecastProps) =
         <div className="mt-4 flex items-start gap-2 p-3 bg-muted/50 rounded-lg text-xs">
           <Info className="h-4 w-4 text-primary shrink-0" />
           <p className="text-muted-foreground">
-            Prices for this route are predicted to {isUp ? "rise" : "fall"} over the next month. 
+            Prices for <span className="font-bold text-foreground">{currentRoute.origin} → {currentRoute.destination}</span> are predicted to {isUp ? "rise" : "fall"} over the next month. 
             <strong> {isUp ? "Consider booking early" : "You may find better rates in ~14 days"}</strong> based on current AI indicators.
           </p>
         </div>
