@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Loader2, AlertTriangle, CheckCircle2, Scale, Package2, AlertCircle } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { calculateVolumeBasedPrice } from "@/utils/pricing";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -22,6 +23,7 @@ import { useWeatherPrediction } from "@/hooks/useWeatherPrediction";
 import { WeatherWidget } from "@/components/weather/WeatherWidget";
 import { RouteWeatherMap } from "@/components/weather/RouteWeatherMap";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { StripeCheckoutCard } from "@/components/payment/StripeCheckoutCard";
 
 interface EnhancedBookingModalProps {
   open: boolean;
@@ -56,6 +58,8 @@ export const EnhancedBookingModal = ({ open, onClose, onSuccess, container, trad
   const [balanceAnalysis, setBalanceAnalysis] = useState<any>(null);
   const [showSplitOptions, setShowSplitOptions] = useState(false);
   const [selectedSplitOption, setSelectedSplitOption] = useState<number | null>(null);
+  const [step, setStep] = useState<'details' | 'payment'>('details');
+  const [createdBookingId, setCreatedBookingId] = useState<string | null>(null);
   const { prediction: weatherPrediction, loading: weatherLoading, predictWeather } = useWeatherPrediction();
 
   // Validate cargo safety
@@ -95,7 +99,7 @@ export const EnhancedBookingModal = ({ open, onClose, onSuccess, container, trad
           destination: { city: container.destination_city || container.destination, country: container.destination_country || "Unknown" }
         });
         setEstimatedPrice(pricing.totalPrice);
-        setPriceBreakdown(pricing.breakdown);
+        setPriceBreakdown(pricing); // Store the full pricing object for breakdown display
       }
 
       // Check if splitting is needed
@@ -142,7 +146,7 @@ export const EnhancedBookingModal = ({ open, onClose, onSuccess, container, trad
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Check safety validation
     if (safetyValidation && !safetyValidation.isValid) {
       toast.error("Cannot book: Container doesn't meet safety requirements");
@@ -152,6 +156,36 @@ export const EnhancedBookingModal = ({ open, onClose, onSuccess, container, trad
     // Check weight balance
     if (weightBalance && !weightBalance.isSafe) {
       toast.error("Cannot book: Unsafe weight distribution. Please adjust cargo placement or split booking.");
+      return;
+    }
+
+    // Date validation
+    const pickupDate = formData.pickup_date ? new Date(formData.pickup_date) : null;
+    const availableFrom = container.available_from ? new Date(container.available_from) : null;
+    const availableUntil = container.available_until ? new Date(container.available_until) : null;
+
+    if (pickupDate) {
+      // Ensure pickup is before departure
+      const departureDate = container.departure_date ? new Date(container.departure_date) : null;
+      if (departureDate && pickupDate >= departureDate) {
+        toast.error(`Pickup must be before the vessel departure date (${format(departureDate, "MMM dd")})`);
+        return;
+      }
+
+      // Warning only for availability, not a hard block if user really wants to schedule
+      if (availableFrom && pickupDate < availableFrom) {
+        toast.warning(`Note: You requested pickup before the provider's listed availability (${format(availableFrom, "MMM dd")}). This may require provider confirmation.`);
+      }
+      
+      if (availableUntil && pickupDate > availableUntil) {
+        toast.error(`Pickup date cannot be after the container's availability period (${format(availableUntil, "MMM dd")})`);
+        return;
+      }
+    }
+
+    // Check if the overall container has expired
+    if (availableUntil && availableUntil < new Date()) {
+      toast.error("This container listing has expired and can no longer be booked.");
       return;
     }
 
@@ -171,34 +205,58 @@ export const EnhancedBookingModal = ({ open, onClose, onSuccess, container, trad
       const finalPrice = estimatedPrice || container.price_usd;
       const spaceUtilization = (cargoVolume / (container.total_volume_m3 || 1)) * 100;
 
-      const { error } = await supabase.from("bookings").insert({
+      // Build booking object carefully check which fields exist in the database
+      // This helps avoid 400 errors if the user hasn't run the latest migration yet
+      const bookingData: any = {
         booking_number: `BK-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         trader_id: traderId,
         container_id: container.id,
         provider_id: container.provider_id,
         cargo_description: formData.cargo_description,
-        cargo_category: cargoCategory,
         cargo_weight_kg: cargoWeight,
+        price_usd: finalPrice,
+        pickup_date: formData.pickup_date || null,
+        delivery_date: formData.delivery_date || null,
+        status: "pending",
+      };
+
+      // Add advanced fields only if we are confident they won't cause 400 errors
+      // In a real app, we'd check the schema once at app start.
+      // Here we'll include them as optional based on our enhanced schema design.
+      // Stage 1: Attempt Enhanced Insert
+      const { data: enhancedData, error: enhancedError } = await supabase.from("bookings").insert({
+        ...bookingData,
+        cargo_category: cargoCategory,
         booked_volume_m3: cargoVolume,
         booked_weight_kg: cargoWeight,
-        price_usd: finalPrice,
         price_per_m3: container.price_per_m3,
         space_utilization_percent: spaceUtilization,
-        pickup_date: formData.pickup_date,
-        delivery_date: formData.delivery_date,
         pickup_address: formData.pickup_address,
         drop_address: formData.drop_address,
         final_delivery_date: formData.final_delivery_date,
-        status: "pending",
         safety_flags: {
           category: cargoCategory,
           validated: true,
           warnings: safetyValidation?.warnings || []
         },
         weight_distribution: weightBalance?.distribution || {}
-      });
+      }).select('id').single();
 
-      if (error) throw error;
+      let bookingId = enhancedData?.id;
+
+      // Stage 2: Fallback to Basic Insert if enhanced fails (likely due to missing columns)
+      if (enhancedError) {
+        console.warn("Enhanced booking failed (expected if SQL migration not run), falling back to basic schema:", enhancedError.message);
+        
+        const { data: basicData, error: basicError } = await supabase.from("bookings").insert(bookingData).select('id').single();
+        
+        if (basicError) throw basicError;
+        
+        bookingId = basicData?.id;
+        toast.info("Booking stored in compatibility mode. Run SQL migration to unlock smart features.");
+      }
+
+      setCreatedBookingId(bookingId);
 
       // Create notification for provider
       if (provider) {
@@ -211,12 +269,13 @@ export const EnhancedBookingModal = ({ open, onClose, onSuccess, container, trad
         });
       }
 
-      toast.success("Booking submitted successfully!");
-      onSuccess();
-      onClose();
+      toast.success("Booking details saved. Proceeding to payment...");
+      setStep('payment');
+      // No closing here, we move to payment step
     } catch (error: any) {
       console.error("Booking error:", error);
-      toast.error(error.message || "Failed to create booking");
+      const errorMessage = typeof error === 'object' && error !== null ? (error.message || JSON.stringify(error)) : String(error);
+      toast.error(errorMessage || "Failed to create booking");
     } finally {
       setLoading(false);
     }
@@ -226,10 +285,21 @@ export const EnhancedBookingModal = ({ open, onClose, onSuccess, container, trad
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-2xl">Enhanced Smart Booking</DialogTitle>
+          <DialogTitle className="text-2xl" id="booking-dialog-title">Enhanced Smart Booking</DialogTitle>
+          <p className="text-sm text-muted-foreground" id="booking-dialog-description">
+            Complete the details below to book space in the container from <strong>{container?.origin}</strong> to <strong>{container?.destination}</strong>.
+          </p>
         </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <AnimatePresence mode="wait">
+          {step === 'details' ? (
+            <motion.form 
+              key="details"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, x: -20 }}
+              onSubmit={handleSubmit} 
+              className="space-y-6"
+            >
           {/* Cargo Category Selection */}
           <Card className="p-4">
             <Label className="text-base font-semibold mb-3 block">Cargo Category</Label>
@@ -450,9 +520,10 @@ export const EnhancedBookingModal = ({ open, onClose, onSuccess, container, trad
                   <div className="text-2xl font-bold">${estimatedPrice.toFixed(2)}</div>
                 </div>
                 {priceBreakdown && (
-                  <div className="text-sm text-right">
-                    <div>Base: ${priceBreakdown.basePrice.toFixed(2)}</div>
-                    {priceBreakdown.surcharges > 0 && <div>Surcharges: ${priceBreakdown.surcharges.toFixed(2)}</div>}
+                  <div className="text-xs text-right space-y-1">
+                    <div className="flex justify-between gap-4"><span>Size (Volume):</span> <span>${priceBreakdown.breakdown.volumeCharge.toFixed(2)}</span></div>
+                    <div className="flex justify-between gap-4"><span>Weight:</span> <span>${priceBreakdown.breakdown.weightCharge.toFixed(2)}</span></div>
+                    <div className="flex justify-between gap-4"><span>Distance ({priceBreakdown.distanceKm || 0} km):</span> <span>${priceBreakdown.breakdown.distanceCharge.toFixed(2)}</span></div>
                   </div>
                 )}
               </div>
@@ -493,11 +564,32 @@ export const EnhancedBookingModal = ({ open, onClose, onSuccess, container, trad
               disabled={loading || (safetyValidation && !safetyValidation.isValid) || (weightBalance && !weightBalance.isSafe)}
             >
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Confirm Booking
+              Confirm Booking & Pay
             </Button>
           </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+        </motion.form>
+      ) : (
+        <motion.div
+          key="payment"
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0 }}
+          className="py-4"
+        >
+          <StripeCheckoutCard
+            bookingId={createdBookingId!}
+            amount={estimatedPrice || container.price_usd}
+            currency="USD"
+            onSuccess={() => {
+              onSuccess();
+              onClose();
+            }}
+            onCancel={() => setStep('details')}
+          />
+        </motion.div>
+      )}
+    </AnimatePresence>
+  </DialogContent>
+</Dialog>
   );
 };

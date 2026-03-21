@@ -15,6 +15,7 @@ import { DocumentUpload } from "@/components/booking/DocumentUpload";
 import { DocumentList } from "@/components/booking/DocumentList";
 import { CancelBookingModal } from "@/components/booking/CancelBookingModal";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MessageSquare } from "lucide-react";
 
 const Bookings = () => {
   const navigate = useNavigate();
@@ -284,6 +285,12 @@ const Bookings = () => {
     }
   };
 
+  const hasUnverifiedDocs = (booking: any) => {
+    // This is a helper to check if the booking should show a warning
+    // In a real app, you might fetch this count, for now we let the user view current docs
+    return booking.status === 'pending';
+  };
+
   const handleUpdateLegStatus = async (bookingId: string, legNumber: number, status: string) => {
     try {
       const { data, error } = await supabase.rpc('update_transport_leg_status', {
@@ -357,6 +364,23 @@ const Bookings = () => {
                     </div>
                     {getStatusBadge(booking.status)}
                   </div>
+
+                  {booking.status === 'pending' && (
+                    <div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-primary/5 border border-primary/20 animate-pulse">
+                      <FileText className="h-5 w-5 text-primary" />
+                      <p className="text-sm font-bold text-primary">Compliance Review Recommended</p>
+                      <p className="text-xs text-muted-foreground mr-auto">• Check 'Documents' tab before approving</p>
+                      <Button 
+                        variant="link" 
+                        size="sm" 
+                        className="text-primary gap-1 h-auto p-0"
+                        onClick={() => navigate(`/dashboard/provider/messages?bookingId=${booking.id}`)}
+                      >
+                        <MessageSquare className="h-4 w-4" />
+                        Message Trader
+                      </Button>
+                    </div>
+                  )}
 
                   <TabsList className="grid w-full grid-cols-3 mb-4">
                     <TabsTrigger value="details">Details</TabsTrigger>
@@ -501,17 +525,30 @@ const Bookings = () => {
                     )}
                   </TabsContent>
 
-                  <TabsContent value="documents" className="space-y-4">
-                    <DocumentUpload
-                      bookingId={booking.id}
-                      userRole="provider"
-                      onUploadSuccess={() => setDocumentRefresh(prev => prev + 1)}
-                    />
+                  <TabsContent value="documents" className="space-y-6">
+                    <div className="flex justify-between items-center">
+                      <h4 className="font-bold flex items-center gap-2">
+                        <FileText className="h-4 w-4 text-primary" />
+                        Trader Verification Documents
+                      </h4>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="gap-2"
+                        onClick={() => navigate(`/dashboard/provider/messages?bookingId=${booking.id}`)}
+                      >
+                        <MessageSquare className="h-4 w-4" />
+                        Ask for Documents
+                      </Button>
+                    </div>
+
                     <DocumentList
                       bookingId={booking.id}
                       currentUserId={currentUserId}
+                      userRole="provider"
                       refreshTrigger={documentRefresh}
                     />
+
                   </TabsContent>
                 </Tabs>
               </Card>

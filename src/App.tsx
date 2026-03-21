@@ -41,7 +41,9 @@ import ProviderSettings from "./pages/provider/Settings";
 
 // Trader pages
 import TraderSearch from "./pages/trader/Search";
+import TraderAuctions from "./pages/trader/Auctions";
 import TraderBookings from "./pages/trader/Bookings";
+import TraderDocuments from "./pages/trader/Documents";
 import TraderPayments from "./pages/trader/Payments";
 import TraderInvoices from "./pages/trader/Invoices";
 import TraderSettings from "./pages/trader/Settings";
@@ -89,7 +91,9 @@ const App = () => (
           {/* Trader Routes */}
           <Route path="/dashboard/trader" element={<TraderDashboard />} />
           <Route path="/dashboard/trader/search" element={<TraderSearch />} />
+          <Route path="/dashboard/trader/auctions" element={<TraderAuctions />} />
           <Route path="/dashboard/trader/bookings" element={<TraderBookings />} />
+          <Route path="/dashboard/trader/documents" element={<TraderDocuments />} />
           <Route path="/dashboard/trader/payments" element={<TraderPayments />} />
           <Route path="/dashboard/trader/invoices" element={<TraderInvoices />} />
           <Route path="/dashboard/trader/analytics" element={<CommonAnalytics />} />

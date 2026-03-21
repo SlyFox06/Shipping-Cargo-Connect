@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Bot, Send, X, Minimize2, Maximize2 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { chatService } from "@/services/chatService";
 import { toast } from "sonner";
 
 interface Message {
@@ -40,106 +40,34 @@ export const AIAssistant = () => {
     setIsLoading(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        toast.error("Please log in to use the assistant");
-        return;
-      }
-
-      // Get user role
-      const { data: userRole } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", session.user.id)
-        .single();
-
-      const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chatbot`;
-      
-      const response = await fetch(CHAT_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
-        body: JSON.stringify({
-          message: userMessage,
-          userId: session.user.id,
-          userRole: userRole?.role || "trader"
-        }),
-      });
-
-      if (response.status === 429) {
-        toast.error("Rate limit exceeded. Please try again later.");
-        setMessages(prev => [...prev, { 
-          role: "assistant", 
-          content: "I'm currently experiencing high traffic. Please try again in a moment." 
-        }]);
-        return;
-      }
-
-      if (response.status === 402) {
-        toast.error("Service requires payment. Please contact support.");
-        setMessages(prev => [...prev, { 
-          role: "assistant", 
-          content: "The AI service is temporarily unavailable. Please try again later." 
-        }]);
-        return;
-      }
-
-      if (!response.ok || !response.body) {
-        throw new Error("Failed to get response");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let assistantMessage = "";
-      let textBuffer = "";
-
-      // Add empty assistant message that we'll update
+      // Add empty assistant message that we'll update incrementally
       setMessages(prev => [...prev, { role: "assistant", content: "" }]);
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        textBuffer += decoder.decode(value, { stream: true });
-
-        let newlineIndex: number;
-        while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
-          let line = textBuffer.slice(0, newlineIndex);
-          textBuffer = textBuffer.slice(newlineIndex + 1);
-
-          if (line.endsWith("\r")) line = line.slice(0, -1);
-          if (line.startsWith(":") || line.trim() === "") continue;
-          if (!line.startsWith("data: ")) continue;
-
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr === "[DONE]") break;
-
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const content = parsed.choices?.[0]?.delta?.content;
-            if (content) {
-              assistantMessage += content;
-              setMessages(prev => {
-                const newMessages = [...prev];
-                newMessages[newMessages.length - 1].content = assistantMessage;
-                return newMessages;
-              });
-            }
-          } catch {
-            // Incomplete JSON, will be completed in next chunk
-          }
+      let assistantMessage = "";
+      
+      await chatService.getStreamingResponse(
+        userMessage,
+        (content) => {
+          assistantMessage += content;
+          setMessages(prev => {
+            const newMessages = [...prev];
+            newMessages[newMessages.length - 1].content = assistantMessage;
+            return newMessages;
+          });
+        },
+        (error) => {
+          console.error("Assistant error:", error);
+          toast.error(error.message || "Failed to get response");
+          setMessages(prev => [...prev, {
+            role: "assistant",
+            content: "I'm having trouble processing your request. Please try again."
+          }]);
         }
-      }
+      );
 
     } catch (error: any) {
       console.error("Assistant error:", error);
-      toast.error("Failed to get response from assistant");
-      setMessages(prev => [...prev, {
-        role: "assistant",
-        content: "I'm having trouble processing your request. Please try again."
-      }]);
+      toast.error("An unexpected error occurred");
     } finally {
       setIsLoading(false);
     }

@@ -2,9 +2,10 @@ import { ReactNode, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Ship, LogOut, User } from "lucide-react";
-import { signOut, getUserRole } from "@/lib/auth";
+import { signOut } from "@/lib/auth";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { PageTransition } from "./layout/PageTransition";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -68,7 +69,9 @@ const DashboardLayout = ({ children, title }: DashboardLayoutProps) => {
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">
-        {children}
+        <PageTransition>
+          {children}
+        </PageTransition>
       </main>
     </div>
   );

@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useState } from "react";
 import { useNavigate, NavLink, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Ship, LogOut, LayoutDashboard, Search, FileText, DollarSign, MessageSquare, BarChart3, Settings, Receipt } from "lucide-react";
+import { Ship, LogOut, LayoutDashboard, Search, FileText, DollarSign, MessageSquare, BarChart3, Settings, Receipt, Hammer } from "lucide-react";
 import { signOut } from "@/lib/auth";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -27,7 +27,9 @@ interface TraderLayoutProps {
 const navItems = [
   { title: "Dashboard", url: "/dashboard/trader", icon: LayoutDashboard },
   { title: "Search Containers", url: "/dashboard/trader/search", icon: Search },
-  { title: "My Bookings", url: "/dashboard/trader/bookings", icon: FileText },
+  { title: "Auctions", url: "/dashboard/trader/auctions", icon: Hammer },
+  { title: "My Bookings", url: "/dashboard/trader/bookings", icon: Ship },
+  { title: "Documents", url: "/dashboard/trader/documents", icon: FileText },
   { title: "Payments", url: "/dashboard/trader/payments", icon: DollarSign },
   { title: "Invoices", url: "/dashboard/trader/invoices", icon: Receipt },
   { title: "Analytics", url: "/dashboard/trader/analytics", icon: BarChart3 },

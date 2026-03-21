@@ -7,7 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Search, Package, Clock, CheckCircle, ArrowRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getUserRole } from "@/lib/auth";
-import { BookingModal } from "@/components/trader/BookingModal";
+import { EnhancedBookingModal as BookingModal } from "@/components/trader/EnhancedBookingModal";
+import { Badge } from "@/components/ui/badge";
+import { AIPriceForecast } from "@/components/analytics/AIPriceForecast";
+import { AuctionCard } from "@/components/trader/AuctionCard";
+import { AuctionModal } from "@/components/trader/AuctionModal";
+import { Hammer } from "lucide-react";
 
 const TraderDashboard = () => {
   const navigate = useNavigate();
@@ -23,6 +28,9 @@ const TraderDashboard = () => {
   const [userId, setUserId] = useState("");
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [selectedContainer, setSelectedContainer] = useState<any>(null);
+  const [auctions, setAuctions] = useState<any[]>([]);
+  const [selectedAuctionId, setSelectedAuctionId] = useState<string | null>(null);
+  const [showAuctionModal, setShowAuctionModal] = useState(false);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -66,14 +74,42 @@ const TraderDashboard = () => {
         completedBookings: completedCount || 0,
       });
 
-      // Fetch available containers
+      // Fetch available containers - filter by status and only those not yet expired
+      const now = new Date().toISOString();
       const { data: containersData } = await supabase
         .from('containers')
         .select('*, providers(*)')
         .eq('status', 'available')
-        .limit(10);
+        .gte('available_until', now)
+        .order('available_until', { ascending: true })
+        .limit(12);
 
-      setContainers(containersData || []);
+      // Priority sort logic: putting those expiring in < 7 days at the top
+      const sortedContainers = (containersData || []).sort((a: any, b: any) => {
+        const aExpiry = new Date(a.available_until).getTime();
+        const bExpiry = new Date(b.available_until).getTime();
+        const sevenDays = 7 * 24 * 60 * 60 * 1000;
+        const nowTime = new Date().getTime();
+        
+        const aUrgent = (aExpiry - nowTime) < sevenDays;
+        const bUrgent = (bExpiry - nowTime) < sevenDays;
+        
+        if (aUrgent && !bUrgent) return -1;
+        if (!aUrgent && bUrgent) return 1;
+        return aExpiry - bExpiry;
+      });
+
+      setContainers(sortedContainers);
+
+      // Fetch active auctions
+      // @ts-ignore - Tables generated after initial build may not show in types
+      const { data: auctionsData } = await supabase
+        .from('auctions')
+        .select('*, containers(*)')
+        .eq('status', 'active')
+        .limit(4);
+
+      setAuctions(auctionsData || []);
       setLoading(false);
 
       // Set up real-time subscription for bookings
@@ -120,8 +156,16 @@ const TraderDashboard = () => {
       query = query.ilike('destination', `%${searchDestination}%`);
     }
 
+    const now = new Date().toISOString();
+    query = query.gte('available_until', now);
+
     const { data } = await query;
-    setContainers(data || []);
+    const sorted = (data || []).sort((a: any, b: any) => {
+      const aExpiry = new Date(a.available_until).getTime();
+      const bExpiry = new Date(b.available_until).getTime();
+      return aExpiry - bExpiry;
+    });
+    setContainers(sorted);
   };
 
   if (loading) {
@@ -171,6 +215,49 @@ const TraderDashboard = () => {
                 <p className="text-sm text-muted-foreground">Completed</p>
                 <p className="text-3xl font-bold">{stats.completedBookings}</p>
               </div>
+            </div>
+          </Card>
+        </div>
+
+        {/* Live Auctions Section */}
+        {auctions.length > 0 && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center">
+                <Hammer className="h-4 w-4 text-primary animate-bounce" />
+              </div>
+              <h2 className="text-2xl font-bold">Live Container Auctions</h2>
+              <Badge variant="outline" className="border-primary/50 text-primary bg-primary/5 ml-2 animate-pulse">
+                Hot Deals
+              </Badge>
+            </div>
+            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {auctions.map((auction) => (
+                <AuctionCard 
+                  key={auction.id} 
+                  auction={auction} 
+                  userId={userId}
+                  onBidClick={(id) => {
+                    setSelectedAuctionId(id);
+                    setShowAuctionModal(true);
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* AI Insights Section */}
+        <div className="grid lg:grid-cols-2 gap-6">
+          <AIPriceForecast origin="Mumbai" destination="Dubai" />
+          <Card className="p-6 bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50 flex flex-col justify-center">
+            <h3 className="text-xl font-bold mb-2">Market Sentiment</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Supply for the **Indo-Arabian** routes is currently high. Global port congestion index is stable at **4.2**.
+            </p>
+            <div className="flex gap-2">
+              <Badge className="bg-success/20 text-success border-success/30">Stable Routes</Badge>
+              <Badge className="bg-primary/20 text-primary border-primary/30">Competitive Pricing</Badge>
             </div>
           </Card>
         </div>
@@ -241,11 +328,18 @@ const TraderDashboard = () => {
                     </div>
                     <div className="text-right">
                       <p className="text-xl font-bold text-primary">${container.price_usd}</p>
+                      {new Date(container.available_until).getTime() - new Date().getTime() < 7 * 24 * 60 * 60 * 1000 && (
+                        <Badge variant="destructive" className="text-[10px] mt-1 animate-pulse">EXPIRING SOON</Badge>
+                      )}
                     </div>
                   </div>
                   <div className="text-sm text-muted-foreground mb-3">
                     <p>Capacity: {container.capacity_kg} kg</p>
                     <p>Transport: {container.transport_mode.toUpperCase()}</p>
+                    <p className="flex items-center gap-1 mt-1 text-xs">
+                      <Clock className="h-3 w-3" />
+                      Available until: {new Date(container.available_until).toLocaleDateString()}
+                    </p>
                   </div>
                   <Button 
                     size="sm" 
@@ -302,6 +396,12 @@ const TraderDashboard = () => {
         }}
         container={selectedContainer}
         traderId={userId}
+      />
+      <AuctionModal
+        open={showAuctionModal}
+        onClose={() => setShowAuctionModal(false)}
+        auctionId={selectedAuctionId}
+        userId={userId}
       />
     </TraderLayout>
   );

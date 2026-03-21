@@ -1,22 +1,9 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { shipmentService, Milestone } from "@/services/shipmentService";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, Circle, Clock } from "lucide-react";
 import { format } from "date-fns";
-
-interface Milestone {
-  id: string;
-  milestone: string;
-  status: string;
-  completed_date: string | null;
-  location: string | null;
-  notes: string | null;
-}
-
-interface ShipmentTrackingProps {
-  bookingId: string;
-}
 
 const milestoneLabels: Record<string, string> = {
   booking_confirmed: "Booking Confirmed",
@@ -29,50 +16,36 @@ const milestoneLabels: Record<string, string> = {
   delivered: "Delivered",
 };
 
+interface ShipmentTrackingProps {
+  bookingId: string;
+}
+
 export const ShipmentTracking = ({ bookingId }: ShipmentTrackingProps) => {
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const fetchMilestones = async () => {
+      try {
+        const data = await shipmentService.getMilestones(bookingId);
+        setMilestones(data);
+      } catch (error) {
+        console.error("Error fetching milestones:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
     fetchMilestones();
 
-    const channel = supabase
-      .channel(`milestones-${bookingId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "shipment_milestones",
-          filter: `booking_id=eq.${bookingId}`,
-        },
-        () => {
-          fetchMilestones();
-        }
-      )
-      .subscribe();
+    const unsubscribe = shipmentService.subscribeToMilestones(bookingId, () => {
+      fetchMilestones();
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribe();
     };
   }, [bookingId]);
-
-  const fetchMilestones = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("shipment_milestones")
-        .select("*")
-        .eq("booking_id", bookingId)
-        .order("created_at");
-
-      if (error) throw error;
-      setMilestones(data || []);
-    } catch (error) {
-      console.error("Error fetching milestones:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   if (loading) {
     return (

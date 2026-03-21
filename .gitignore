@@ -9,3 +9,8 @@ yarn-debug.log*
 yarn-error.log*
 .DS_Store
 .vite
+
+# Temporary debug/output files
+tsc_clean.txt
+tsc_out.txt
+changed_files.txt

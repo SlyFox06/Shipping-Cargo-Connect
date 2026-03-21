@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import TraderLayout from "@/components/layout/TraderLayout";
 import { Card } from "@/components/ui/card";
-import { FileText, Download } from "lucide-react";
+import { FileText, Download, MessageSquare } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getUserRole } from "@/lib/auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
-import { PaymentCheckout } from "@/components/PaymentCheckout";
+import { jsPDF } from "jspdf";
+import "jspdf-autotable";
+import { StripeCheckoutCard } from "@/components/payment/StripeCheckoutCard";
 import { toast } from "sonner";
 import { BookingProgress } from "@/components/trader/BookingProgress";
 import { BookingUtilizationCard } from "@/components/trader/BookingUtilizationCard";
@@ -136,29 +138,50 @@ const Bookings = () => {
 
       // Create notification for provider
       const booking = bookings.find(b => b.id === selectedBookingId);
-      if (booking && booking.providers) {
-        await supabase.from('notifications').insert([{
-          user_id: booking.providers.user_id,
-          type: 'booking',
-          title: 'Booking Cancelled',
-          message: `Trader cancelled booking ${booking.booking_number}. ${refundInfo?.eligible ? `Refund: $${refundInfo.amount.toFixed(2)}` : 'No refund applicable.'}`,
-          link: `/provider/bookings`
-        }]);
-
-        // Send email notification
-        await supabase.functions.invoke('send-booking-notification', {
-          body: {
-            userId: booking.providers.user_id,
-            type: 'booking_cancelled',
-            bookingId: selectedBookingId,
-            data: {
-              bookingNumber: booking.booking_number,
-              cancelledBy: 'Trader',
-              reason: reason,
-              refundAmount: refundInfo?.amount,
-            }
+      if (booking) {
+        // Trigger automated Stripe refund if payment exists
+        const successfulPayment = booking.payments?.find((p: any) => p.status === 'succeeded');
+        if (successfulPayment && refundInfo?.eligible) {
+          console.log("Triggering automated Stripe refund...");
+          try {
+            await supabase.functions.invoke('process-refund', {
+              body: {
+                bookingId: selectedBookingId,
+                refundAmount: refundInfo.amount,
+                reason: reason
+              }
+            });
+            toast.success(`Refund of $${refundInfo.amount.toFixed(2)} processed!`);
+          } catch (refundErr) {
+            console.error("Refund processing failed:", refundErr);
+            toast.error("Booking cancelled but refund processing failed. Please contact support.");
           }
-        });
+        }
+
+        if (booking.providers) {
+          await supabase.from('notifications').insert([{
+            user_id: booking.providers.user_id,
+            type: 'booking',
+            title: 'Booking Cancelled',
+            message: `Trader cancelled booking ${booking.booking_number}. ${refundInfo?.eligible ? `Refund: $${refundInfo.amount.toFixed(2)}` : 'No refund applicable.'}`,
+            link: `/provider/bookings`
+          }]);
+
+          // Send email notification
+          await supabase.functions.invoke('send-booking-notification', {
+            body: {
+              userId: booking.providers.user_id,
+              type: 'booking_cancelled',
+              bookingId: selectedBookingId,
+              data: {
+                bookingNumber: booking.booking_number,
+                cancelledBy: 'Trader',
+                reason: reason,
+                refundAmount: refundInfo?.amount,
+              }
+            }
+          });
+        }
       }
 
       toast.success("Booking cancelled successfully");
@@ -190,38 +213,91 @@ const Bookings = () => {
   };
 
   const handleDownloadInvoice = async (booking: any) => {
-    toast.info("Generating invoice...");
+    toast.info("Generating professional PDF invoice...");
     
-    const invoiceContent = `
-INVOICE - ${booking.booking_number}
-================================
-Date: ${format(new Date(), "MMM dd, yyyy")}
+    try {
+      const doc = new jsPDF() as any;
+      
+      // Add Brand Logo / Placeholder
+      doc.setFillColor(14, 165, 233); // Primary Color
+      doc.rect(0, 0, 210, 40, 'F');
+      
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(28);
+      doc.setFont("helvetica", "bold");
+      doc.text("SHIP-LINK CONNECT", 15, 25);
+      
+      doc.setFontSize(10);
+      doc.text("Premium Global Logistics Platform", 15, 32);
+      
+      // Invoice Details Header
+      doc.setTextColor(0, 0, 0);
+      doc.setFontSize(20);
+      doc.text("INVOICE", 15, 60);
+      
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Invoice Number: ${booking.booking_number}`, 150, 60);
+      doc.text(`Date: ${format(new Date(), "MMM dd, yyyy")}`, 150, 65);
+      doc.text(`Status: ${booking.status.toUpperCase()}`, 150, 70);
 
-TRADER INFORMATION
-${booking.profiles?.full_name || "N/A"}
-${booking.profiles?.email || "N/A"}
+      // Trader & Provider Sections
+      doc.setFont("helvetica", "bold");
+      doc.text("BILL TO:", 15, 85);
+      doc.setFont("helvetica", "normal");
+      doc.text(booking.profiles?.full_name || "Valued Trader", 15, 90);
+      doc.text(booking.profiles?.email || "N/A", 15, 95);
+      
+      doc.setFont("helvetica", "bold");
+      doc.text("SHIPPER / PROVIDER:", 100, 85);
+      doc.setFont("helvetica", "normal");
+      doc.text(booking.providers?.company_name || "Logistics Partner", 100, 90);
+      doc.text(booking.containers?.transport_mode.toUpperCase() || "CARGO", 100, 95);
 
-BOOKING DETAILS
-Container Type: ${booking.containers?.container_type}
-Route: ${booking.containers?.origin} → ${booking.containers?.destination}
-Cargo: ${booking.cargo_description}
-Weight: ${booking.cargo_weight_kg.toLocaleString()} kg
+      // Booking Details Table
+      const tableData = [
+        ["Container Type", booking.containers?.container_type.replace(/_/g, ' ').toUpperCase()],
+        ["Origin", booking.containers?.origin],
+        ["Destination", booking.containers?.destination],
+        ["Cargo Description", booking.cargo_description],
+        ["Cargo Category", booking.cargo_category?.replace(/_/g, ' ') || "General"],
+        ["Weight", `${booking.cargo_weight_kg.toLocaleString()} kg`],
+        ["Volume", `${booking.booked_volume_m3 || "N/A"} m³`]
+      ];
 
-PAYMENT
-Total Amount: $${booking.price_usd.toLocaleString()}
-Status: ${booking.status}
+      doc.autoTable({
+        startY: 110,
+        head: [['Description', 'Details']],
+        body: tableData,
+        theme: 'striped',
+        headStyles: { fillColor: [14, 165, 233] },
+        alternateRowStyles: { fillColor: [240, 249, 255] }
+      });
 
-Thank you for your business!
-    `;
+      // Summary
+      const finalY = (doc as any).lastAutoTable.finalY + 15;
+      doc.setDrawColor(200, 200, 200);
+      doc.line(15, finalY, 195, finalY);
+      
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text("TOTAL AMOUNT PAID:", 15, finalY + 10);
+      doc.setTextColor(14, 165, 233);
+      doc.setFontSize(16);
+      doc.text(`$${booking.price_usd.toLocaleString()} USD`, 140, finalY + 10);
 
-    const blob = new Blob([invoiceContent], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `invoice-${booking.booking_number}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success("Invoice downloaded!");
+      // Footer
+      doc.setTextColor(150, 150, 150);
+      doc.setFontSize(8);
+      doc.text("This is a computer generated invoice and does not require a physical signature.", 105, 280, { align: "center" });
+      doc.text("Ship-Link Connect © 2026. All Rights Reserved.", 105, 285, { align: "center" });
+
+      doc.save(`invoice-${booking.booking_number}.pdf`);
+      toast.success("Professional Invoice Downloaded!");
+    } catch (err) {
+      console.error("PDF generation failed:", err);
+      toast.error("Failed to generate PDF invoice. Try again.");
+    }
   };
 
   return (
@@ -261,6 +337,15 @@ Thank you for your business!
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="gap-2 h-8"
+                        onClick={() => navigate(`/dashboard/trader/messages?bookingId=${booking.id}`)}
+                      >
+                        <MessageSquare className="h-4 w-4" />
+                        Message Provider
+                      </Button>
                       {getStatusBadge(booking.status)}
                     </div>
                   </div>
@@ -383,10 +468,12 @@ Thank you for your business!
                               <p className="font-medium">🎉 Your booking has been approved!</p>
                               <p className="text-muted-foreground mt-1">Please proceed with payment to confirm your shipment.</p>
                             </div>
-                            <PaymentCheckout
+                            <StripeCheckoutCard
                               bookingId={booking.id}
                               amount={booking.price_usd}
                               currency="USD"
+                              onSuccess={() => fetchBookings(currentUserId)}
+                              onCancel={() => {}} 
                             />
                           </div>
                         )}
