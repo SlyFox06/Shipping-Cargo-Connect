@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { AIPriceForecast } from "@/components/analytics/AIPriceForecast";
 import { AuctionCard } from "@/components/trader/AuctionCard";
 import { AuctionModal } from "@/components/trader/AuctionModal";
+import { AICargoOptimizer } from "@/components/trader/AICargoOptimizer";
 import { Hammer } from "lucide-react";
 
 const TraderDashboard = () => {
@@ -261,6 +262,13 @@ const TraderDashboard = () => {
             </div>
           </Card>
         </div>
+
+        {/* AI Cargo Optimizer */}
+        <AICargoOptimizer
+          availableContainers={containers}
+          origin={searchOrigin || "Mumbai"}
+          destination={searchDestination || "Dubai"}
+        />
 
         {/* Search Section */}
         <Card className="p-6 bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm border-border/50">
