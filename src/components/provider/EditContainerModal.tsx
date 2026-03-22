@@ -7,7 +7,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import { Loader2, Sparkles, Box, DollarSign } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { useForm } from "react-hook-form";
+import { ProviderRouteForm, type RouteConfig } from "./ProviderRouteForm";
 
 interface EditContainerModalProps {
   open: boolean;
@@ -18,15 +21,14 @@ interface EditContainerModalProps {
 }
 
 export const EditContainerModal = ({ open, onClose, onSuccess, container, isProviderVerified }: EditContainerModalProps) => {
+
   const [loading, setLoading] = useState(false);
+  const [routeConfig, setRouteConfig] = useState<RouteConfig | null>(null);
+  const form = useForm();
+
+
   const [formData, setFormData] = useState({
     container_type: "",
-    origin_country: "",
-    origin_city: "",
-    destination_country: "",
-    destination_city: "",
-    available_from: "",
-    available_until: "",
     capacity_kg: "",
     length_ft: "",
     width_ft: "",
@@ -36,7 +38,7 @@ export const EditContainerModal = ({ open, onClose, onSuccess, container, isProv
     description: "",
     transport_mode: "sea",
     currency: "USD",
-    total_volume_m3: ""
+    total_volume_m3: "",
   });
 
   // Initialize form with container data
@@ -44,12 +46,6 @@ export const EditContainerModal = ({ open, onClose, onSuccess, container, isProv
     if (container && open) {
       setFormData({
         container_type: container.container_type || "",
-        origin_country: container.origin_country || "",
-        origin_city: container.origin_city || "",
-        destination_country: container.destination_country || "",
-        destination_city: container.destination_city || "",
-        available_from: container.available_from || "",
-        available_until: container.available_until || "",
         capacity_kg: container.capacity_kg?.toString() || "",
         length_ft: container.length_ft?.toString() || "",
         width_ft: container.width_ft?.toString() || "",
@@ -59,8 +55,10 @@ export const EditContainerModal = ({ open, onClose, onSuccess, container, isProv
         description: container.description || "",
         transport_mode: container.transport_mode || "sea",
         currency: container.currency || "USD",
-        total_volume_m3: container.total_volume_m3?.toString() || ""
+        total_volume_m3: container.total_volume_m3?.toString() || "",
       });
+
+      // Also set initial route config if needed, though ProviderRouteForm handles initialData prop
     }
   }, [container, open]);
 
@@ -71,7 +69,6 @@ export const EditContainerModal = ({ open, onClose, onSuccess, container, isProv
     const height = parseFloat(formData.height_ft);
     const rate = parseFloat(formData.base_rate_per_sqft);
     
-    // Calculate volume in m³
     if (length && width && height) {
       const length_m = length * 0.3048;
       const width_m = width * 0.3048;
@@ -80,7 +77,6 @@ export const EditContainerModal = ({ open, onClose, onSuccess, container, isProv
       setFormData(prev => ({ ...prev, total_volume_m3: volume_m3 }));
     }
     
-    // Calculate price
     if (length && width && rate) {
       const sqft = length * width;
       const price = (sqft * rate).toFixed(2);
@@ -90,9 +86,12 @@ export const EditContainerModal = ({ open, onClose, onSuccess, container, isProv
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
     if (!isProviderVerified) {
       toast.error("Your provider account must be verified to edit containers");
+      return;
+    }
+    if (!routeConfig) {
+      toast.error("Route configuration is required");
       return;
     }
 
@@ -105,14 +104,14 @@ export const EditContainerModal = ({ open, onClose, onSuccess, container, isProv
         .from("containers")
         .update({
           container_type: formData.container_type as any,
-          origin: `${formData.origin_country}, ${formData.origin_city}`,
-          origin_country: formData.origin_country,
-          origin_city: formData.origin_city,
-          destination: `${formData.destination_country}, ${formData.destination_city}`,
-          destination_country: formData.destination_country,
-          destination_city: formData.destination_city,
-          available_from: formData.available_from,
-          available_until: formData.available_until,
+          origin: routeConfig.origin,
+          origin_city: routeConfig.origin.split(',')[0]?.trim(),
+          origin_country: routeConfig.origin.split(',')[1]?.trim() || routeConfig.origin,
+          destination: routeConfig.destination,
+          destination_city: routeConfig.destination.split(',')[0]?.trim(),
+          destination_country: routeConfig.destination.split(',')[1]?.trim() || routeConfig.destination,
+          available_from: routeConfig.departureDate,
+          available_until: routeConfig.arrivalDate,
           capacity_kg: parseFloat(formData.capacity_kg),
           length_ft: parseFloat(formData.length_ft),
           width_ft: parseFloat(formData.width_ft),
@@ -123,26 +122,12 @@ export const EditContainerModal = ({ open, onClose, onSuccess, container, isProv
           transport_mode: formData.transport_mode as any,
           currency: formData.currency,
           total_volume_m3: volumeM3,
-          total_weight_capacity_kg: parseFloat(formData.capacity_kg)
+          total_weight_capacity_kg: parseFloat(formData.capacity_kg),
+          cargo_type: routeConfig.cargoTypesAllowed?.[0] || 'general',
         })
         .eq("id", container.id);
 
       if (error) throw error;
-
-      // Log activity
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        await supabase.from("audit_logs").insert({
-          user_id: session.user.id,
-          action: "update_container",
-          table_name: "containers",
-          record_id: container.id,
-          details: {
-            container_id: container.id,
-            changes: formData
-          }
-        });
-      }
 
       toast.success("Container updated successfully!");
       onSuccess();
@@ -156,31 +141,65 @@ export const EditContainerModal = ({ open, onClose, onSuccess, container, isProv
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto border-secondary/20 bg-card/95 backdrop-blur-md">
         <DialogHeader>
-          <DialogTitle>Edit Container</DialogTitle>
+          <DialogTitle className="text-2xl font-bold bg-gradient-to-r from-secondary to-primary bg-clip-text text-transparent flex items-center gap-2">
+            <Sparkles className="h-6 w-6 text-secondary" />
+            Edit Container Lifecycle
+          </DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-4">
+
+        <form onSubmit={handleSubmit} className="space-y-8">
+          <div className="p-1 bg-gradient-to-br from-secondary/20 via-transparent to-primary/20 rounded-2xl">
+            <div className="bg-card p-6 rounded-[14px]">
+              <ProviderRouteForm 
+                form={form}
+                initialData={{
+                  origin: container?.origin,
+                  destination: container?.destination,
+                  cargoTypesAllowed: container?.cargo_type ? [container.cargo_type] : ["general"],
+                  departureDate: container?.available_from,
+                  arrivalDate: container?.available_until,
+                  transitPorts: [],
+                }}
+                onRouteChange={setRouteConfig}
+                disabled={!isProviderVerified || loading}
+              />
+
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Sparkles className="h-5 w-5 text-secondary" />
+              <h3 className="font-bold text-sm uppercase tracking-wider">Specifications & Global Pricing</h3>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="transport_mode">Transport Mode *</Label>
-                <Select value={formData.transport_mode} onValueChange={(value) => setFormData({ ...formData, transport_mode: value })}>
-                  <SelectTrigger>
+              <div className="space-y-2">
+                <Label>Transport Mode *</Label>
+                <Select 
+                  value={formData.transport_mode} 
+                  onValueChange={(value) => setFormData({ ...formData, transport_mode: value })}
+                >
+                  <SelectTrigger className="h-10">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="sea">Sea</SelectItem>
-                    <SelectItem value="air">Air</SelectItem>
-                    <SelectItem value="rail">Rail</SelectItem>
-                    <SelectItem value="road">Road</SelectItem>
+                    <SelectItem value="sea">🚢 Sea</SelectItem>
+                    <SelectItem value="air">✈️ Air</SelectItem>
+                    <SelectItem value="rail">🚂 Rail</SelectItem>
+                    <SelectItem value="road">🚛 Road</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label htmlFor="container_type">Container Type *</Label>
-                <Select value={formData.container_type} onValueChange={(value) => setFormData({ ...formData, container_type: value })}>
-                  <SelectTrigger>
+              <div className="space-y-2">
+                <Label>Container Type *</Label>
+                <Select 
+                  value={formData.container_type} 
+                  onValueChange={(value) => setFormData({ ...formData, container_type: value })}
+                >
+                  <SelectTrigger className="h-10">
                     <SelectValue placeholder="Select type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -196,209 +215,112 @@ export const EditContainerModal = ({ open, onClose, onSuccess, container, isProv
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="origin_country">Origin Country *</Label>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Length (ft)</Label>
                 <Input
-                  id="origin_country"
-                  value={formData.origin_country}
-                  onChange={(e) => setFormData({ ...formData, origin_country: e.target.value })}
-                  required
+                  type="number"
+                  step="0.1"
+                  value={formData.length_ft}
+                  onChange={(e) => setFormData({ ...formData, length_ft: e.target.value })}
+                  className="h-10"
                 />
               </div>
-              <div>
-                <Label htmlFor="origin_city">Origin City *</Label>
+              <div className="space-y-2">
+                <Label>Width (ft)</Label>
                 <Input
-                  id="origin_city"
-                  value={formData.origin_city}
-                  onChange={(e) => setFormData({ ...formData, origin_city: e.target.value })}
-                  required
+                  type="number"
+                  step="0.1"
+                  value={formData.width_ft}
+                  onChange={(e) => setFormData({ ...formData, width_ft: e.target.value })}
+                  className="h-10"
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="destination_country">Destination Country *</Label>
+              <div className="space-y-2">
+                <Label>Height (ft)</Label>
                 <Input
-                  id="destination_country"
-                  value={formData.destination_country}
-                  onChange={(e) => setFormData({ ...formData, destination_country: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="destination_city">Destination City *</Label>
-                <Input
-                  id="destination_city"
-                  value={formData.destination_city}
-                  onChange={(e) => setFormData({ ...formData, destination_city: e.target.value })}
-                  required
+                  type="number"
+                  step="0.1"
+                  value={formData.height_ft}
+                  onChange={(e) => setFormData({ ...formData, height_ft: e.target.value })}
+                  className="h-10"
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="available_from">Departure Date *</Label>
+            <div className="grid grid-cols-2 gap-4 items-end">
+              <div className="space-y-2">
+                <Label>Max Weight Capacity (kg)</Label>
                 <Input
-                  id="available_from"
-                  type="date"
-                  value={formData.available_from}
-                  onChange={(e) => setFormData({ ...formData, available_from: e.target.value })}
-                  required
+                  type="number"
+                  value={formData.capacity_kg}
+                  onChange={(e) => setFormData({ ...formData, capacity_kg: e.target.value })}
+                  className="h-10"
                 />
               </div>
-              <div>
-                <Label htmlFor="available_until">Arrival Date *</Label>
-                <Input
-                  id="available_until"
-                  type="date"
-                  value={formData.available_until}
-                  onChange={(e) => setFormData({ ...formData, available_until: e.target.value })}
-                  required
-                />
+              <div className="space-y-2">
+                <Badge variant="secondary" className="mb-2 w-full justify-center gap-2 py-2 border-dashed border-secondary/40">
+                  <Box className="h-3 w-3" />
+                  Total Volume: {formData.total_volume_m3 || '0.00'} m³
+                </Badge>
               </div>
             </div>
 
-            <div className="border-t pt-4">
-              <h3 className="font-semibold mb-3">Container Dimensions & Pricing</h3>
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <Label htmlFor="length_ft">Length (ft) *</Label>
-                  <Input
-                    id="length_ft"
-                    type="number"
-                    step="0.1"
-                    value={formData.length_ft}
-                    onChange={(e) => setFormData({ ...formData, length_ft: e.target.value })}
-                    required
-                  />
+            <div className="p-4 bg-muted/20 rounded-xl border border-secondary/20">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-3">
+                  <Label className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                    <DollarSign className="h-3 w-3" /> Currency
+                  </Label>
+                  <Select value={formData.currency} onValueChange={(v) => setFormData({...formData, currency: v})}>
+                    <SelectTrigger className="h-10 bg-background/50">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="USD">🇺🇸 USD - US Dollar</SelectItem>
+                      <SelectItem value="EUR">🇪🇺 EUR - Euro</SelectItem>
+                      <SelectItem value="INR">🇮🇳 INR - Indian Rupee</SelectItem>
+                      <SelectItem value="AED">🇦🇪 AED - UAE Dirham</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div>
-                  <Label htmlFor="width_ft">Width (ft) *</Label>
-                  <Input
-                    id="width_ft"
-                    type="number"
-                    step="0.1"
-                    value={formData.width_ft}
-                    onChange={(e) => setFormData({ ...formData, width_ft: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="height_ft">Height (ft) *</Label>
-                  <Input
-                    id="height_ft"
-                    type="number"
-                    step="0.1"
-                    value={formData.height_ft}
-                    onChange={(e) => setFormData({ ...formData, height_ft: e.target.value })}
-                    required
-                  />
-                </div>
-              </div>
-              
-              {/* Auto-calculated Volume Display */}
-              <div className="mt-4">
-                <Label htmlFor="volume_m3">Volume (m³)</Label>
-                <Input
-                  id="volume_m3"
-                  type="text"
-                  value={formData.total_volume_m3 || "0.00"}
-                  readOnly
-                  className="bg-muted"
-                  placeholder="Auto-calculated"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Automatically calculated from dimensions
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="currency">Currency *</Label>
-                <Select value={formData.currency} onValueChange={(value) => setFormData({ ...formData, currency: value })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="USD">🇺🇸 USD - US Dollar</SelectItem>
-                    <SelectItem value="EUR">🇪🇺 EUR - Euro</SelectItem>
-                    <SelectItem value="INR">🇮🇳 INR - Indian Rupee</SelectItem>
-                    <SelectItem value="GBP">🇬🇧 GBP - British Pound</SelectItem>
-                    <SelectItem value="AED">🇦🇪 AED - UAE Dirham</SelectItem>
-                    <SelectItem value="CAD">🇨🇦 CAD - Canadian Dollar</SelectItem>
-                    <SelectItem value="AUD">🇦🇺 AUD - Australian Dollar</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="base_rate_per_sqft">Base Rate per Sq Ft *</Label>
-                  <Input
-                    id="base_rate_per_sqft"
-                    type="number"
-                    step="0.01"
-                    value={formData.base_rate_per_sqft}
-                    onChange={(e) => setFormData({ ...formData, base_rate_per_sqft: e.target.value })}
-                    required
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Cost per square foot in {formData.currency}
-                  </p>
-                </div>
-                <div>
-                  <Label htmlFor="price_usd">Total Price ({formData.currency}) *</Label>
-                  <Input
-                    id="price_usd"
-                    type="number"
-                    step="0.01"
-                    value={formData.price_usd}
-                    readOnly
-                    className="bg-muted"
-                    required
-                  />
+                <div className="grid grid-cols-1 gap-2">
+                  <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">AI Estimation Result</Label>
+                  <div className="h-10 flex items-center justify-between px-4 bg-secondary/10 rounded-lg text-secondary border border-secondary/30">
+                    <span className="text-xs font-medium">Updated Total</span>
+                    <span className="font-black">{formData.currency} {formData.price_usd}</span>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div>
-              <Label htmlFor="capacity_kg">Max Capacity (kg) *</Label>
-              <Input
-                id="capacity_kg"
-                type="number"
-                value={formData.capacity_kg}
-                onChange={(e) => setFormData({ ...formData, capacity_kg: e.target.value })}
-                required
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="description">Description</Label>
+            <div className="space-y-2">
+              <Label>Description & Terminal Notes</Label>
               <Textarea
-                id="description"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                rows={4}
+                rows={3}
+                placeholder="Update container details or special requirements..."
               />
             </div>
           </div>
 
-          <div className="flex justify-end gap-4">
-            <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
+          <div className="flex justify-end gap-3 pt-6 border-t border-border">
+            <Button variant="ghost" onClick={onClose} disabled={loading} className="px-8 font-medium">
               Cancel
             </Button>
-            <Button type="submit" disabled={loading || !isProviderVerified}>
+            <Button 
+              type="submit" 
+              disabled={loading || !isProviderVerified}
+              className="px-12 bg-gradient-to-r from-secondary to-primary hover:shadow-lg hover:shadow-secondary/20 transition-all font-bold group"
+            >
               {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Updating...
-                </>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
               ) : (
-                "Update Container"
+                <>
+                  Save Changes
+                  <Sparkles className="ml-2 h-4 w-4 group-hover:rotate-12 transition-transform" />
+                </>
               )}
             </Button>
           </div>
