@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import TraderLayout from "@/components/layout/TraderLayout";
 import { supabase } from "@/integrations/supabase/client";
 import { getUserRole } from "@/lib/auth";
-import { SearchContainers } from "@/components/trader/SearchContainers";
+import SearchContainers from "./SearchContainers";
 import { EnhancedBookingModal } from "@/components/trader/EnhancedBookingModal";
 import { PreBookingChatModal } from "@/components/chat/PreBookingChatModal";
 

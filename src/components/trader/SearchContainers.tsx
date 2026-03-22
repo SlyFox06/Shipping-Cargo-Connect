@@ -89,7 +89,7 @@ export const SearchContainers = ({ onBookContainer, onAskQuestion }: SearchConta
       let query = supabase
         .from("containers")
         .select("*, providers(user_id, verified, rating), departure_date")
-        .eq("status", "available");
+        .in("status", ["available", "active"]);
 
       // Text filters
       if (filters.origin.trim()) {

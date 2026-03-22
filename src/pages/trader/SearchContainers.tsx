@@ -27,9 +27,12 @@ import {
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Container {
   id: string; origin: string; destination: string
-  departure_date: string; arrival_date: string
-  available_cbm: number; max_cbm: number
-  max_weight_kg: number; price_per_cbm: number
+  departure_date?: string; arrival_date?: string;
+  available_from?: string; available_until?: string;
+  available_cbm?: number; max_cbm?: number
+  available_volume_m3?: number; total_volume_m3?: number;
+  max_weight_kg?: number; capacity_kg?: number;
+  price_per_cbm?: number; price_usd?: number; price_per_m3?: number;
   container_type: string; refrigerated: boolean
   status: string; provider_id: string
   transit_days?: number
@@ -37,11 +40,20 @@ interface Container {
 
 const daysUntil = (d: string) => Math.max(0, Math.ceil((new Date(d).getTime() - Date.now()) / 86400000))
 const fmt = (n: number) => n >= 1000 ? "$" + (n / 1000).toFixed(1) + "K" : "$" + n.toLocaleString()
-const fillRate = (c: Container) => c.max_cbm ? Math.round(((c.max_cbm - c.available_cbm) / c.max_cbm) * 100) : 0
+const fillRate = (c: any) => {
+  const max = c.max_cbm ?? c.total_volume_m3 ?? 0
+  const avail = c.available_cbm ?? c.available_volume_m3 ?? max
+  return max ? Math.round(((max - avail) / max) * 100) : 0
+}
 const fillColor = (p: number) => p >= 75 ? "#10b981" : p >= 40 ? "#f59e0b" : "rgba(255,255,255,0.3)"
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function SearchContainers() {
+interface SearchContainersProps {
+  onBookContainer?: (container: any) => void;
+  onAskQuestion?: (container: any) => void;
+}
+
+export default function SearchContainers({ onBookContainer, onAskQuestion }: SearchContainersProps = {}) {
   const { user }  = useAuth()
   const navigate  = useNavigate()
 
@@ -87,46 +99,55 @@ export default function SearchContainers() {
 
   // ── Search ──
   const search = useCallback(async () => {
-    setLoading(true); setSearched(true)
+    setLoading(true);
+    setSearched(true);
     try {
+      const today = new Date().toISOString().split("T")[0];
       let q = supabase
         .from("containers")
         .select("*")
-        .eq("status", "active")
-        .gt("available_cbm", 0)
-        .gte("departure_date", new Date().toISOString().split("T")[0])
+        .or("status.eq.active,status.eq.available")
+        .or("available_cbm.gt.0,available_volume_m3.gt.0")
+        .or(`departure_date.gte.${today},available_from.gte.${today}`);
 
-      // Origin — match city name (case-insensitive contains)
       if (origin) {
-        const city = origin.split(",")[0].trim()
-        q = q.ilike("origin", `%${city}%`)
+        const city = origin.split(",")[0].trim();
+        q = q.ilike("origin", `%${city}%`);
       }
       if (destination) {
-        const city = destination.split(",")[0].trim()
-        q = q.ilike("destination", `%${city}%`)
+        const city = destination.split(",")[0].trim();
+        q = q.ilike("destination", `%${city}%`);
       }
-      if (containerType) q = q.eq("container_type", containerType)
-      if (reeferOnly)    q = q.eq("refrigerated", true)
-      if (minCBM)        q = q.gte("available_cbm", parseFloat(minCBM))
-      if (maxWeight)     q = q.lte("max_weight_kg", parseFloat(maxWeight))
-      if (maxPrice)      q = q.lte("price_per_cbm", parseFloat(maxPrice))
-      if (departureFrom) q = q.gte("departure_date", departureFrom)
-      if (departureTo)   q = q.lte("departure_date", departureTo)
+      if (containerType) q = q.eq("container_type", containerType);
+      if (reeferOnly)    q = q.eq("refrigerated", true);
+      if (minCBM)        q = q.gte("available_cbm", parseFloat(minCBM));
+      if (maxWeight)     q = q.lte("max_weight_kg", parseFloat(maxWeight));
+      if (maxPrice)      q = q.lte("price_per_cbm", parseFloat(maxPrice));
+      if (departureFrom) q = q.gte("departure_date", departureFrom);
+      if (departureTo)   q = q.lte("departure_date", departureTo);
 
-      q = q.order("departure_date", { ascending: true }).limit(50)
+      q = q.order("departure_date", { ascending: true }).limit(50);
 
-      const { data, error } = await q
-      if (error) throw error
-      setResults(data ?? [])
-    } catch(e) { console.error("search error:", e); setResults([]) }
-    finally { setLoading(false) }
-  }, [origin, destination, cargoType, containerType, reeferOnly, minCBM, maxWeight, maxPrice, departureFrom, departureTo])
+      const { data, error } = await q;
+      if (error) throw error;
+      setResults(data ?? []);
+    } catch(e) {
+      console.error("search error:", e);
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [origin, destination, cargoType, containerType, reeferOnly, minCBM, maxWeight, maxPrice, departureFrom, departureTo]);
 
-  const sorted = [...results].sort((a, b) => {
-    if (sortBy === "price")     return (a.price_per_cbm ?? 0) - (b.price_per_cbm ?? 0)
-    if (sortBy === "cbm")       return (b.available_cbm ?? 0) - (a.available_cbm ?? 0)
+  const sorted = [...results].sort((a: any, b: any) => {
+    const aPrice = a.price_per_cbm ?? a.price_usd ?? 0
+    const bPrice = b.price_per_cbm ?? b.price_usd ?? 0
+    const aCbm = a.available_cbm ?? a.available_volume_m3 ?? 0
+    const bCbm = b.available_cbm ?? b.available_volume_m3 ?? 0
+    if (sortBy === "price")     return aPrice - bPrice
+    if (sortBy === "cbm")       return bCbm - aCbm
     if (sortBy === "fill")      return fillRate(a) - fillRate(b)
-    return new Date(a.departure_date).getTime() - new Date(b.departure_date).getTime()
+    return new Date(a.departure_date || a.available_from).getTime() - new Date(b.departure_date || b.available_from).getTime()
   })
 
   const cargoMeta = CARGO_TYPES.find(c => c.value === cargoType)
@@ -337,12 +358,18 @@ export default function SearchContainers() {
               </div>
 
               <div style={s.resultsGrid}>
-                {sorted.map(c => {
+                {sorted.map((c: any) => {
                   const fill = fillRate(c)
                   const fc   = fillColor(fill)
-                  const days = daysUntil(c.departure_date)
+                  const depDate = c.departure_date ?? c.available_from
+                  const arrDate = c.arrival_date ?? c.available_until
+                  const days = daysUntil(depDate)
                   const urgent = days <= 3
-                  const totalEst = c.price_per_cbm * (c.available_cbm)
+                  const price = c.price_per_cbm ?? c.price_per_m3 ?? c.price_usd ?? 0
+                  const maxCBM = c.max_cbm ?? c.total_volume_m3 ?? 0
+                  const availCBM = c.available_cbm ?? c.available_volume_m3 ?? maxCBM
+                  const maxKg = c.max_weight_kg ?? c.capacity_kg ?? 0
+                  const totalEst = price * availCBM
 
                   return (
                     <div key={c.id} style={{...s.resultCard,...(urgent?{borderColor:"rgba(239,68,68,0.3)"}:{})}}>
@@ -356,7 +383,7 @@ export default function SearchContainers() {
                           </div>
                           <div style={s.routeDest}>{c.destination?.split(",")[0]}</div>
                         </div>
-                        <div style={s.priceTag}>${(c.price_per_cbm??0).toFixed(0)}<span style={{fontSize:10,fontWeight:400,color:"rgba(255,255,255,0.4)"}}>/CBM</span></div>
+                        <div style={s.priceTag}>${price.toFixed(0)}<span style={{fontSize:10,fontWeight:400,color:"rgba(255,255,255,0.4)"}}>{c.price_usd && !c.price_per_cbm ? '' : '/CBM'}</span></div>
                       </div>
 
                       {/* Badges */}
@@ -372,21 +399,21 @@ export default function SearchContainers() {
                       <div style={s.fillSection}>
                         <div style={s.fillTop}>
                           <span style={{fontSize:11,color:"rgba(255,255,255,0.4)"}}>Space available</span>
-                          <span style={{fontSize:11,fontWeight:500,color:fc}}>{fill}% filled · {(c.available_cbm??0).toFixed(1)} CBM left</span>
+                          <span style={{fontSize:11,fontWeight:500,color:fc}}>{fill}% filled · {availCBM.toFixed(1)} CBM left</span>
                         </div>
                         <div style={s.fillBg}><div style={{...s.fillFg,width:fill+"%",background:fc}}/></div>
                       </div>
 
                       {/* Details */}
                       <div style={s.detailGrid}>
-                        <div style={s.detail}><span style={s.detailLabel}>Departure</span><span style={s.detailVal}>{new Date(c.departure_date).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</span></div>
-                        {c.arrival_date&&<div style={s.detail}><span style={s.detailLabel}>Arrival</span><span style={s.detailVal}>{new Date(c.arrival_date).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</span></div>}
-                        <div style={s.detail}><span style={s.detailLabel}>Max weight</span><span style={s.detailVal}>{((c.max_weight_kg??0)/1000).toFixed(0)}t</span></div>
-                        <div style={s.detail}><span style={s.detailLabel}>Total CBM</span><span style={s.detailVal}>{(c.max_cbm??0).toFixed(0)} CBM</span></div>
+                        <div style={s.detail}><span style={s.detailLabel}>Departure</span><span style={s.detailVal}>{new Date(depDate).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</span></div>
+                        {arrDate && <div style={s.detail}><span style={s.detailLabel}>Arrival</span><span style={s.detailVal}>{new Date(arrDate).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</span></div>}
+                        <div style={s.detail}><span style={s.detailLabel}>Max weight</span><span style={s.detailVal}>{(maxKg/1000).toFixed(0)}t</span></div>
+                        <div style={s.detail}><span style={s.detailLabel}>Total CBM</span><span style={s.detailVal}>{maxCBM.toFixed(0)} CBM</span></div>
                       </div>
 
                       {/* Est total */}
-                      {c.available_cbm > 0 && (
+                      {availCBM > 0 && (
                         <div style={s.estRow}>
                           <span style={{fontSize:11,color:"rgba(255,255,255,0.3)"}}>Est. cost for all available space</span>
                           <span style={{fontSize:13,fontWeight:600,color:"#a855f7"}}>{fmt(totalEst)}</span>
@@ -395,8 +422,8 @@ export default function SearchContainers() {
 
                       {/* Actions */}
                       <div style={s.actionRow}>
-                        <button style={s.viewBtn} onClick={()=>navigate(`/trader/containers/${c.id}`)}>View details</button>
-                        <button style={s.bookBtn} onClick={()=>navigate(`/trader/containers/${c.id}/book`)}>Book now →</button>
+                        <button style={s.viewBtn} onClick={() => onAskQuestion ? onAskQuestion(c) : navigate(`/trader/containers/${c.id}`)}>Ask question</button>
+                        <button style={s.bookBtn} onClick={() => onBookContainer ? onBookContainer(c) : navigate(`/trader/containers/${c.id}/book`)}>Book now →</button>
                       </div>
                     </div>
                   )
