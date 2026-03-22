@@ -10,7 +10,7 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
 
   try {
-    const { origin, destination, cargoType, weightKg, cbm, departureDate } = await req.json()
+    const { origin, destination, cargoType, weightKg, cbm, departureDate, transportMode } = await req.json()
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -48,7 +48,9 @@ Current Weather Conditions:
 Origin (${origin}): ${JSON.stringify(weatherContext.origin)}
 Destination (${destination}): ${JSON.stringify(weatherContext.destination)}
 
-Predict price for: ${weightKg}kg, ${cbm} CBM, ${cargoType}, departing ${departureDate}.
+Transport Mode: ${transportMode || 'sea'}
+
+Predict price and estimated transit time for: ${weightKg}kg, ${cbm} CBM, ${cargoType}, departing ${departureDate}.
 
 Return this exact JSON format:
 {
@@ -57,9 +59,10 @@ Return this exact JSON format:
   "recommended": number,
   "confidence": "low"|"medium"|"high",
   "trend": "rising"|"stable"|"falling",
-  "reasoning": "one sentence explaining price factors + impact of current weather on this route",
+  "reasoning": "one sentence explaining price factors + impact of current weather/transport mode on this route",
   "peakWarning": boolean,
   "weatherImpact": "favorable"|"unfavorable"|"neutral",
+  "estimatedDaysTransit": number,
   "breakdown": {
     "baseFreight": number,
     "fuelSurcharge": number,

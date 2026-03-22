@@ -56,6 +56,7 @@ export function AddContainerModal({ open, onClose, onSuccess, providerId }: Prop
   const [pricePerKg, setPricePerKg]       = useState("")
   const [aiPrice, setAiPrice]             = useState<any>(null)
   const [aiLoading, setAiLoading]         = useState(false)
+  const [aiTransitLoading, setAiTransitLoading] = useState(false)
   const [notes, setNotes]                 = useState("")
   const [offersFirstMile, setOffersFirstMile] = useState(false)
   const [offersLastMile, setOffersLastMile]   = useState(false)
@@ -81,6 +82,19 @@ export function AddContainerModal({ open, onClose, onSuccess, providerId }: Prop
       const { data } = await supabase.functions.invoke("predict-price-ai", { body: { origin, destination, cargoType, weightKg: parseFloat(maxWeightKg)||20000, cbm: parseFloat(maxCBM)||40, departureDate } })
       if (data) { setAiPrice(data); if (!pricePerCBM) setPricePerCBM(String(data.recommended ?? "")) }
     } catch(e) { console.error(e) } finally { setAiLoading(false) }
+  }
+
+  const fetchAITransitTime = async () => {
+    if (!origin || !destination || !departureDate) return
+    setAiTransitLoading(true)
+    try {
+      const { data } = await supabase.functions.invoke("predict-price-ai", { body: { origin, destination, cargoType: "general", weightKg: 20000, cbm: 40, departureDate, transportMode } })
+      if (data?.estimatedDaysTransit) {
+        const d = new Date(departureDate)
+        d.setDate(d.getDate() + data.estimatedDaysTransit)
+        setArrivalDate(d.toISOString().split("T")[0])
+      }
+    } catch(e) { console.error(e) } finally { setAiTransitLoading(false) }
   }
 
   const step1Valid = !!(origin && destination && departureDate)
@@ -174,7 +188,14 @@ export function AddContainerModal({ open, onClose, onSuccess, providerId }: Prop
               </div>
               <div style={m.fieldRow}>
                 <Field label="Departure date *"><input type="date" style={m.input} value={departureDate} min={new Date().toISOString().split("T")[0]} onChange={e=>setDepartureDate(e.target.value)}/></Field>
-                <Field label="Arrival date (est.)"><input type="date" style={m.input} value={arrivalDate} min={departureDate} onChange={e=>setArrivalDate(e.target.value)}/></Field>
+                <Field label="Arrival date (est.)">
+                  <div style={{display:"flex",gap:6}}>
+                    <input type="date" style={{...m.input,flex:1}} value={arrivalDate} min={departureDate} onChange={e=>setArrivalDate(e.target.value)}/>
+                    <button style={{...m.aiPriceBtn, height:38, padding:"0 12px", border:"1px solid rgba(168,85,247,0.3)", opacity:(aiTransitLoading||!origin||!destination||!departureDate)?0.5:1}} onClick={fetchAITransitTime} disabled={aiTransitLoading||!origin||!destination||!departureDate} title="Auto-detect based on weather & route">
+                      {aiTransitLoading ? <div style={{...m.spin, width:14, height:14, borderColor:"#c084fc", borderTopColor:"transparent"}}/> : "✦ AI"}
+                    </button>
+                  </div>
+                </Field>
               </div>
               <Field label="Transport mode">
                 <div style={{ display:"flex", gap:8 }}>
