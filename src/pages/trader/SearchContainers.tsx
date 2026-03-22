@@ -33,7 +33,7 @@ interface Container {
   available_volume_m3?: number; total_volume_m3?: number;
   max_weight_kg?: number; capacity_kg?: number;
   price_per_cbm?: number; price_usd?: number; price_per_m3?: number;
-  container_type: string; refrigerated: boolean
+  container_type: string; refrigerated?: boolean
   status: string; provider_id: string
   transit_days?: number
 }
@@ -118,13 +118,13 @@ export default function SearchContainers({ onBookContainer, onAskQuestion }: Sea
         const city = destination.split(",")[0].trim();
         q = q.ilike("destination", `%${city}%`);
       }
-      if (containerType) q = q.eq("container_type", containerType);
+      if (containerType) q = q.eq("container_type", containerType as any);
       if (reeferOnly)    q = q.eq("refrigerated", true);
       if (minCBM)        q = q.gte("available_cbm", parseFloat(minCBM));
       if (maxWeight)     q = q.lte("max_weight_kg", parseFloat(maxWeight));
       if (maxPrice)      q = q.lte("price_per_cbm", parseFloat(maxPrice));
-      if (departureFrom) q = q.gte("departure_date", departureFrom);
-      if (departureTo)   q = q.lte("departure_date", departureTo);
+      if (departureFrom) q = q.gte("departure_date", departureFrom as any);
+      if (departureTo)   q = q.lte("departure_date", departureTo as any);
 
       q = q.order("departure_date", { ascending: true }).limit(50);
 
@@ -138,6 +138,11 @@ export default function SearchContainers({ onBookContainer, onAskQuestion }: Sea
       setLoading(false);
     }
   }, [origin, destination, cargoType, containerType, reeferOnly, minCBM, maxWeight, maxPrice, departureFrom, departureTo]);
+
+  // Initial search on mount
+  useEffect(() => {
+    search();
+  }, []); // Run once on mount
 
   const sorted = [...results].sort((a: any, b: any) => {
     const aPrice = a.price_per_cbm ?? a.price_usd ?? 0
