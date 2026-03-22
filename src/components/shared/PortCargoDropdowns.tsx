@@ -1,3 +1,21 @@
+// src/components/shared/PortCargoDropdowns.tsx
+//
+// Reusable searchable port dropdown + cargo type selector.
+// Used in:
+//   - AICargoOptimizerSection (route config section)
+//   - SearchContainers page (search bar)
+//
+// USAGE:
+//   import { PortSelect, CargoTypeSelect } from "@/components/shared/PortCargoDropdowns"
+//
+//   <PortSelect
+//     value={origin}
+//     onChange={setOrigin}
+//     placeholder="Origin port..."
+//     excludeValue={destination}
+//   />
+//   <CargoTypeSelect value={cargoType} onChange={setCargoType} />
+
 import { useState, useRef, useEffect } from "react"
 
 // ─── Port data ────────────────────────────────────────────────────────────────

@@ -1,3 +1,18 @@
+// src/pages/trader/SearchContainers.tsx
+//
+// COMPLETE REWRITE of the search page:
+// ✅ Port dropdowns with 30+ ports, searchable, grouped by region
+// ✅ Cargo type dropdown with 17 types grouped by category
+// ✅ Popular route pills (click to instantly fill origin + destination)
+// ✅ Advanced filters: container type, weight, CBM, departure date, price
+// ✅ AI-Powered Recommendations toggle
+// ✅ Results grid with book button
+// ✅ Real Supabase query
+//
+// Adjust import path if needed:
+//   import { supabase } from "@/integrations/supabase/client"   ← Lovable
+//   import { supabase } from "@/lib/supabase"                   ← custom
+
 import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { supabase } from "@/integrations/supabase/client"
