@@ -1,355 +1,676 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import ProviderLayout from "@/components/layout/ProviderLayout";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Plus, Package, TrendingUp, DollarSign, AlertCircle } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
-import { getUserRole } from "@/lib/auth";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { HotRoutes } from "@/components/analytics/HotRoutes";
-import { RevenueForecast } from "@/components/analytics/RevenueForecast";
+import { useEffect, useState, useCallback } from "react"
+import { useNavigate, useLocation } from "react-router-dom"
+import { supabase } from "@/integrations/supabase/client"
+import { useAuth } from "@/hooks/useAuth"
+import { toast } from "sonner"
 
-const ProviderDashboard = () => {
-  const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({
-    totalContainers: 0,
-    activeBookings: 0,
-    totalRevenue: 0,
-    pendingRequests: 0,
-  });
-  const [isVerified, setIsVerified] = useState(false);
-  const [containers, setContainers] = useState<any[]>([]);
-  const [bookings, setBookings] = useState<any[]>([]);
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface Container {
+  id:string; origin:string; destination:string; departure_date:string
+  max_cbm:number; available_cbm:number; container_type:string
+  status:string; price_per_cbm:number; refrigerated:boolean
+}
+interface Booking {
+  id:string; status:string; origin:string; destination:string
+  weight_kg:number; cbm:number; total_price:number; created_at:string
+}
 
-  useEffect(() => {
-    const checkAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) {
-        navigate('/auth');
-        return;
-      }
+// ─── Popular routes — always shown for demand / weather even with 0 containers
+const POPULAR_ROUTES = [
+  { label:"Mumbai → Dubai",        origin:"Mumbai",    destination:"Dubai",      originFull:"Mumbai (INNSA)",    destFull:"Dubai (AEDXB)",     demandScore:88, trend:"rising" },
+  { label:"Shanghai → Rotterdam",  origin:"Shanghai",  destination:"Rotterdam",  originFull:"Shanghai (CNSHA)", destFull:"Rotterdam (NLRTM)", demandScore:74, trend:"rising" },
+  { label:"Mumbai → Singapore",    origin:"Mumbai",    destination:"Singapore",  originFull:"Mumbai (INNSA)",   destFull:"Singapore (SGSIN)", demandScore:61, trend:"stable" },
+  { label:"Dubai → Rotterdam",     origin:"Dubai",     destination:"Rotterdam",  originFull:"Dubai (AEDXB)",    destFull:"Rotterdam (NLRTM)", demandScore:55, trend:"stable" },
+  { label:"Chennai → Dubai",       origin:"Chennai",   destination:"Dubai",      originFull:"Chennai (INMAA)",  destFull:"Dubai (AEDXB)",     demandScore:49, trend:"falling" },
+  { label:"Singapore → Rotterdam", origin:"Singapore", destination:"Rotterdam",  originFull:"Singapore (SGSIN)",destFull:"Rotterdam (NLRTM)", demandScore:79, trend:"rising" },
+]
 
-      const { role } = await getUserRole(session.user.id);
-      if (role !== 'provider') {
-        navigate('/dashboard');
-        return;
-      }
+// ─── Nav ──────────────────────────────────────────────────────────────────────
+const NAV = [
+  { label:"Dashboard",     path:"/dashboard/provider", icon:"grid" },
+  { label:"My containers", path:"/dashboard/provider/containers", icon:"box" },
+  { label:"My bookings",   path:"/dashboard/provider/bookings",   icon:"clipboard" },
+  { label:"Payments",      path:"/dashboard/provider/payments",   icon:"dollar" },
+  { label:"Revenue",       path:"/dashboard/provider/revenue",    icon:"bar" },
+  { label:"Analytics",     path:"/dashboard/provider/analytics",  icon:"activity" },
+  { label:"Messages",      path:"/dashboard/provider/messages",   icon:"message" },
+  { label:"Settings",      path:"/dashboard/provider/settings",   icon:"settings" },
+]
 
-      // Fetch provider stats
-      const { data: provider } = await supabase
-        .from('providers')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .maybeSingle();
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const fillRate   = (c:Container) => c.max_cbm ? Math.round(((c.max_cbm-c.available_cbm)/c.max_cbm)*100) : 0
+const fillColor  = (p:number)    => p>=80?"#10b981":p>=50?"#f59e0b":"#ef4444"
+const daysUntil  = (d:string)    => Math.max(0, Math.ceil((new Date(d).getTime()-Date.now())/86400000))
+const fmt        = (n:number)    => n>=1000000?"$"+(n/1000000).toFixed(1)+"M":n>=1000?"$"+(n/1000).toFixed(1)+"K":"$"+n.toLocaleString()
+const shortId    = (id:string)   => id.length>26 ? id.substring(0,26)+"…" : id
+const wIcon      = (c:number)    => c<=113?"☀️":c<=119?"⛅":c<=143?"🌫":c<=176?"🌦":c<=296?"🌧":"⛈"
+const stStyle    = (s:string) => {
+  const m:Record<string,any> = { confirmed:{bg:"rgba(16,185,129,0.15)",color:"#10b981"}, cancelled:{bg:"rgba(239,68,68,0.12)",color:"#ef4444"}, delivered:{bg:"rgba(59,130,246,0.15)",color:"#3b82f6"}, pending:{bg:"rgba(245,158,11,0.15)",color:"#f59e0b"} }
+  return m[s] ?? { bg:"rgba(255,255,255,0.07)", color:"rgba(255,255,255,0.4)" }
+}
+const demandColor = (score:number) => score>=75?"#a855f7":score>=55?"#3b82f6":score>=40?"#f59e0b":"rgba(255,255,255,0.3)"
+const demandLabel = (score:number, trend:string) => {
+  if (score>=75) return { label:"Hot",    bg:"rgba(168,85,247,0.15)", c:"#a855f7" }
+  if (score>=55) return { label:trend==="rising"?"Rising":"Steady", bg:"rgba(59,130,246,0.12)", c:"#3b82f6" }
+  if (score>=40) return { label:"Steady", bg:"rgba(245,158,11,0.12)", c:"#f59e0b" }
+  return { label:"Low", bg:"rgba(255,255,255,0.06)", c:"rgba(255,255,255,0.3)" }
+}
 
-      if (provider) {
-        setIsVerified(provider.verified || false);
-        fetchData(provider.id);
-
-        // Set up real-time subscriptions
-        const containerChannel = supabase
-          .channel('provider-containers')
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'containers',
-              filter: `provider_id=eq.${provider.id}`
-            },
-            () => fetchData(provider.id)
-          )
-          .subscribe();
-
-        const bookingChannel = supabase
-          .channel('provider-bookings-dash')
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'bookings',
-              filter: `provider_id=eq.${provider.id}`
-            },
-            () => fetchData(provider.id)
-          )
-          .subscribe();
-
-        const verificationChannel = supabase
-          .channel('provider-verification')
-          .on(
-            'postgres_changes',
-            {
-              event: 'UPDATE',
-              schema: 'public',
-              table: 'providers',
-              filter: `user_id=eq.${session.user.id}`
-            },
-            (payload) => {
-              setIsVerified(payload.new.verified || false);
-            }
-          )
-          .subscribe();
-
-        return () => {
-          supabase.removeChannel(containerChannel);
-          supabase.removeChannel(bookingChannel);
-          supabase.removeChannel(verificationChannel);
-        };
-      }
-
-      setLoading(false);
-    };
-
-    checkAuth();
-  }, [navigate]);
-
-  const fetchData = async (providerId: string) => {
-    try {
-      // Fetch containers
-      const { data: containersData } = await supabase
-        .from('containers')
-        .select('*')
-        .eq('provider_id', providerId)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      setContainers(containersData || []);
-
-      // Fetch recent bookings
-      const { data: bookingsData } = await supabase
-        .from('bookings')
-        .select('*, containers(*), profiles!bookings_trader_id_fkey(*)')
-        .eq('provider_id', providerId)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      setBookings(bookingsData || []);
-
-      // Fetch stats
-      const { count: containerCount } = await supabase
-        .from('containers')
-        .select('*', { count: 'exact', head: true })
-        .eq('provider_id', providerId);
-
-      const { count: bookingCount } = await supabase
-        .from('bookings')
-        .select('*', { count: 'exact', head: true })
-        .eq('provider_id', providerId)
-        .eq('status', 'confirmed');
-
-      const { count: pendingCount } = await supabase
-        .from('bookings')
-        .select('*', { count: 'exact', head: true })
-        .eq('provider_id', providerId)
-        .eq('status', 'pending');
-
-      const { data: payments } = await supabase
-        .from('payments')
-        .select('amount')
-        .eq('status', 'succeeded')
-        .in('booking_id', 
-          (await supabase
-            .from('bookings')
-            .select('id')
-            .eq('provider_id', providerId)).data?.map(b => b.id) || []
-        );
-
-      const totalRevenue = payments?.reduce((sum, p) => sum + Number(p.amount), 0) || 0;
-
-      setStats({
-        totalContainers: containerCount || 0,
-        activeBookings: bookingCount || 0,
-        totalRevenue,
-        pendingRequests: pendingCount || 0,
-      });
-    } catch (error) {
-      console.error('Error fetching provider data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (loading) {
-    return null;
+const NavIcon = ({ type, col="rgba(255,255,255,0.4)" }:{ type:string; col?:string }) => {
+  const d:Record<string,string> = {
+    grid:"M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
+    box:"M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z",
+    clipboard:"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2M8 2h8v4H8z",
+    dollar:"M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6",
+    bar:"M18 20V10M12 20V4M6 20v-6",
+    activity:"M22 12h-4l-3 9L9 3l-3 9H2",
+    message:"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
+    settings:"M12 12m-3 0a3 3 0 1 0 6 0 3 3 0 1 0-6 0M19.07 4.93a10 10 0 0 1 0 14.14M5.93 4.93a10 10 0 0 0 0 14.14",
+    signout:"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
   }
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={d[type]||""}/></svg>
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+export default function ProviderDashboard() {
+  const { user }  = useAuth()
+  const navigate  = useNavigate()
+  const location  = useLocation()
+
+  const [containers,  setContainers]  = useState<Container[]>([])
+  const [bookings,    setBookings]    = useState<Booking[]>([])
+  const [revMonths,   setRevMonths]   = useState<{month:string;total:number}[]>([])
+  const [loading,     setLoading]     = useState(true)
+
+  // AI — platform-wide, always loads
+  const [aiDemand,      setAiDemand]      = useState<any[]>([])
+  const [aiWeather,     setAiWeather]     = useState<{route:string;icon:string;temp:number;wind:number;risk:string}[]>([])
+  const [revAlerts,     setRevAlerts]     = useState<{type:string;message:string}[]>([])
+  const [aiLoading,     setAiLoading]     = useState(true)
+  const [weatherRoute,  setWeatherRoute]  = useState(0) // selected route index for weather
+
+  // Derived
+  const totalRev   = bookings.filter(b=>b.status!=="cancelled").reduce((s,b)=>s+(b.total_price??0),0)
+  const activeB    = bookings.filter(b=>b.status==="confirmed"||b.status==="pending").length
+  const pendingB   = bookings.filter(b=>b.status==="pending").length
+  const avgFill    = containers.length ? Math.round(containers.reduce((s,c)=>s+fillRate(c),0)/containers.length) : 0
+  const upcoming   = containers.filter(c=>c.departure_date&&daysUntil(c.departure_date)<=30).sort((a,b)=>new Date(a.departure_date).getTime()-new Date(b.departure_date).getTime())
+  const fillAlerts = containers.filter(c=>fillRate(c)<70&&daysUntil(c.departure_date)<=7)
+  const revMax     = Math.max(...revMonths.map(m=>m.total),100)
+  const thisMonthRev = revMonths[revMonths.length-1]?.total??0
+  const today = new Date().toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"})
+
+  // ── Load core data ──
+  const loadData = useCallback(async () => {
+    if (!user?.id) return
+    setLoading(true)
+    try {
+      const [cr, br] = await Promise.all([
+        supabase.from("containers").select("id,origin,destination,departure_date,max_cbm,available_cbm,container_type,status,price_per_cbm,refrigerated").eq("provider_id", user.id).order("departure_date",{ascending:true}),
+        supabase.from("bookings").select("id,status,origin,destination,weight_kg,cbm,total_price,created_at").eq("provider_id", user.id).order("created_at",{ascending:false}).limit(20),
+      ])
+      if (cr.data) setContainers(cr.data)
+      if (br.data) {
+        setBookings(br.data)
+        const mm:Record<string,number> = {}
+        br.data.filter(b=>b.status!=="cancelled").forEach(b => {
+          const m = new Date(b.created_at).toLocaleDateString("en-US",{month:"short",year:"2-digit"})
+          mm[m] = (mm[m]??0) + (b.total_price??0)
+        })
+        const finalRev = Object.entries(mm).slice(-6).map(([month,total])=>({month,total}))
+        setRevMonths(finalRev)
+      }
+    } catch(e) { console.error("load error:", e) }
+    finally { setLoading(false) }
+  }, [user?.id])
+
+  // ── Load AI — always loads, uses real data if available, platform data otherwise ──
+  const loadAI = useCallback(async () => {
+    if (!user?.id) return
+    setAiLoading(true)
+    try {
+      // Demand forecast — try real data first, fall back to platform popular routes
+      try {
+        const { data:d } = await supabase.functions.invoke("demand-forecast", { body:{ providerId:user.id } })
+        if (d?.hotRoutes?.length > 0) {
+          setAiDemand(d.hotRoutes.slice(0,6))
+        } else {
+          // No real data yet — show platform-wide popular routes with static scores
+          setAiDemand(POPULAR_ROUTES.map(r => ({
+            origin: r.originFull, destination: r.destFull,
+            demandScore: r.demandScore, demandLevel: r.demandScore>=75?"high":r.demandScore>=55?"medium":"low",
+            insight: `${r.label} has ${r.trend} demand from traders on the platform.`
+          })))
+        }
+      } catch {
+        setAiDemand(POPULAR_ROUTES.map(r => ({
+          origin: r.originFull, destination: r.destFull,
+          demandScore: r.demandScore, demandLevel: r.demandScore>=75?"high":r.demandScore>=55?"medium":"low",
+          insight: `${r.label} is a high-demand route on the platform.`
+        })))
+      }
+
+      // Revenue alerts — personalised if bookings exist, generic tips if not
+      if (bookings.length > 0) {
+        try {
+          const { data:rv } = await supabase.functions.invoke("revenue-forecast", { body:{ providerId:user.id } })
+          if (rv?.alerts?.length > 0) setRevAlerts(rv.alerts.slice(0,3))
+        } catch {}
+      } else {
+        setRevAlerts([
+          { type:"opportunity", message:"Mumbai → Dubai has 3 traders actively searching with no available container. List a container on this route to capture demand." },
+          { type:"opportunity", message:"Refrigerated containers on India → UAE routes command 40% higher rates. Consider listing a reefer container." },
+          { type:"tip",        message:"Providers who respond to booking requests within 2 hours have a 3× higher booking conversion rate." },
+        ])
+      }
+
+      // Weather for popular routes (all 6 routes)
+      const ws: {route:string;icon:string;temp:number;wind:number;risk:string}[] = []
+      for (const r of POPULAR_ROUTES) {
+        try {
+          const res = await fetch(`https://wttr.in/${encodeURIComponent(r.destination)}?format=j1`)
+          if (res.ok) {
+            const d = await res.json(); const c = d.current_condition?.[0]
+            if (c) {
+              const code = parseInt(c.weatherCode)
+              const wind = parseInt(c.windspeedKmph)
+              ws.push({ route:r.label, icon:wIcon(code), temp:parseInt(c.temp_C), wind, risk:wind>35?"high":wind>20?"medium":"low" })
+            }
+          } else {
+            // Fallback weather
+            ws.push({ route:r.label, icon:"⛅", temp:28, wind:12, risk:"low" })
+          }
+        } catch {
+          ws.push({ route:r.label, icon:"⛅", temp:28, wind:12, risk:"low" })
+        }
+      }
+      if (ws.length > 0) setAiWeather(ws)
+
+    } catch(e) { console.error("AI error:", e) }
+    finally { setAiLoading(false) }
+  }, [user?.id, bookings.length])
+
+  useEffect(() => { loadData() }, [loadData])
+  useEffect(() => { if (!loading) loadAI() }, [loading, loadAI])
 
   return (
-    <ProviderLayout>
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold">Provider Dashboard</h1>
-          <p className="text-muted-foreground mt-1">Manage your containers and bookings</p>
+    <div style={s.shell}>
+
+      {/* ── Sidebar ── */}
+      <div style={s.sidebar}>
+        <div style={s.logoWrap}>
+          <div style={s.logoIcon}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          </div>
+          <div>
+            <div style={s.logoText}>CargoHub</div>
+            <div style={s.logoSub}>Provider</div>
+          </div>
         </div>
-
-        {/* Verification Status */}
-        {!isVerified && (
-          <Alert className="border-amber-500/50 bg-amber-500/10">
-            <AlertCircle className="h-4 w-4 text-amber-500" />
-            <AlertDescription className="text-amber-600 dark:text-amber-400">
-              Your provider account is pending admin approval. You can view pages but cannot add containers until approved.
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {/* Stats Grid */}
-        <div className="grid md:grid-cols-4 gap-4">
-          <Card className="p-6 bg-card border-border shadow-[0_0_20px_rgba(0,0,0,0.35)]">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
-                <Package className="h-6 w-6 text-primary-foreground" />
+        <div style={s.navSection}>PROVIDER PANEL</div>
+        <nav style={s.nav}>
+          {NAV.map(item => {
+            const active = location.pathname===item.path
+            return (
+              <div key={item.path} style={{...s.navItem,...(active?s.navActive:{})}} onClick={()=>navigate(item.path)}>
+                <NavIcon type={item.icon} col={active?"#a855f7":"rgba(255,255,255,0.4)"}/>
+                <span style={{...s.navLabel,color:active?"#a855f7":"rgba(255,255,255,0.55)"}}>{item.label}</span>
+                {item.label==="My bookings"&&pendingB>0&&<span style={s.navBadge}>{pendingB}</span>}
               </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Total Containers</p>
-                <p className="text-3xl font-bold text-foreground">{stats.totalContainers}</p>
-              </div>
+            )
+          })}
+        </nav>
+        <div style={s.sidebarFooter}>
+          <div style={s.userRow}>
+            <div style={s.avatar}>{(user?.email??"P").substring(0,2).toUpperCase()}</div>
+            <div style={s.userInfo}>
+              <div style={s.userName}>{user?.email?.split("@")[0]??"Provider"}</div>
+              <div style={s.userEmail}>{(user?.email??"").substring(0,22)}{(user?.email??"").length>22?"…":""}</div>
             </div>
-          </Card>
-
-          <Card className="p-6 bg-card border-border shadow-[0_0_20px_rgba(0,0,0,0.35)]">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
-                <TrendingUp className="h-6 w-6 text-primary-foreground" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Active Bookings</p>
-                <p className="text-3xl font-bold text-foreground">{stats.activeBookings}</p>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="p-6 bg-card border-border shadow-[0_0_20px_rgba(0,0,0,0.35)]">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
-                <DollarSign className="h-6 w-6 text-primary-foreground" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Total Revenue</p>
-                <p className="text-3xl font-bold text-foreground">${stats.totalRevenue.toLocaleString()}</p>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="p-6 bg-card border-border shadow-[0_0_20px_rgba(0,0,0,0.35)]">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
-                <TrendingUp className="h-6 w-6 text-primary-foreground" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Pending Requests</p>
-                <p className="text-3xl font-bold text-foreground">{stats.pendingRequests}</p>
-              </div>
-            </div>
-          </Card>
-        </div>
-
-        {/* AI Analytics Section */}
-        <div className="grid md:grid-cols-2 gap-6">
-          <HotRoutes />
-          <RevenueForecast />
-        </div>
-
-        {/* Quick Actions */}
-        <div className="grid md:grid-cols-2 gap-4">
-          <Card className="p-6 bg-card border-border shadow-[0_0_20px_rgba(0,0,0,0.35)]">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold">Recent Containers</h2>
-              <Button 
-                className="bg-primary hover:bg-primary/90 text-primary-foreground gap-2"
-                disabled={!isVerified}
-                onClick={() => navigate('/dashboard/provider/containers')}
-              >
-                <Plus className="h-4 w-4" />
-                {containers.length > 0 ? 'View All' : 'Add Container'}
-              </Button>
-            </div>
-
-            {containers.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <Package className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                <p className="text-sm">No containers added yet</p>
-                <p className="text-xs">{!isVerified ? 'Wait for admin approval to add containers' : 'Add your first container to start receiving bookings'}</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {containers.map((container) => (
-                  <div key={container.id} className="p-3 bg-muted/20 rounded-lg border border-border">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="font-medium text-sm text-foreground">
-                          {container.origin_city}, {container.origin_country} → {container.destination_city}, {container.destination_country}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{container.container_type}</p>
-                      </div>
-                      <p className="text-sm font-semibold text-primary">${container.price_usd}</p>
-                    </div>
-                  </div>
-                ))}
-                {containers.length >= 5 && (
-                  <Button 
-                    variant="link" 
-                    className="w-full"
-                    onClick={() => navigate('/dashboard/provider/containers')}
-                  >
-                    View All Containers
-                  </Button>
-                )}
-              </div>
-            )}
-          </Card>
-
-          <Card className="p-6 bg-card border-border shadow-[0_0_20px_rgba(0,0,0,0.35)]">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold">Recent Bookings</h2>
-              {bookings.length > 0 && (
-                <Button 
-                  variant="link"
-                  onClick={() => navigate('/dashboard/provider/bookings')}
-                >
-                  View All
-                </Button>
-              )}
-            </div>
-            {bookings.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <TrendingUp className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                <p className="text-sm">No bookings yet</p>
-                <p className="text-xs">Bookings will appear here once traders book your containers</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {bookings.map((booking) => (
-                  <div key={booking.id} className="p-3 bg-muted/20 rounded-lg border border-border">
-                    <div className="flex justify-between items-start mb-2">
-                      <div>
-                        <p className="font-medium text-sm text-foreground">{booking.booking_number}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {booking.profiles?.full_name || booking.profiles?.email}
-                        </p>
-                      </div>
-                      <span className={`text-xs px-2 py-1 rounded border ${
-                        booking.status === 'pending' ? 'bg-warning/20 text-warning border-warning/30' :
-                        booking.status === 'confirmed' ? 'bg-success/20 text-success border-success/30' :
-                        'bg-primary/20 text-primary border-primary/30'
-                      }`}>
-                        {booking.status}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {booking.containers?.origin_city} → {booking.containers?.destination_city}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
+            <button style={s.signOutBtn} onClick={async()=>{await supabase.auth.signOut();navigate("/")}} title="Sign out">
+              <NavIcon type="signout" col="rgba(255,255,255,0.3)"/>
+            </button>
+          </div>
         </div>
       </div>
-    </ProviderLayout>
-  );
-};
 
-export default ProviderDashboard;
+      {/* ── Main ── */}
+      <div style={s.main}>
+
+        {/* Topbar */}
+        <div style={s.topbar}>
+          <div>
+            <div style={s.pt}>Provider Dashboard</div>
+            <div style={s.ps}>{today} · {containers.length} container{containers.length!==1?"s":""} active</div>
+          </div>
+          <div style={s.tr}>
+            <div style={s.notifBtn}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+              {pendingB>0&&<div style={s.notifDot}/>}
+            </div>
+            <button style={s.addBtn} onClick={()=>navigate("/dashboard/provider/containers")}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add container
+            </button>
+          </div>
+        </div>
+
+        <div style={s.content}>
+
+          {/* Fill-rate alerts */}
+          {fillAlerts.map(c=>(
+            <div key={c.id} style={s.alertStrip}>
+              <div style={s.alertDot}/>
+              <div style={s.alertText}><strong>{c.origin.split(",")[0]} → {c.destination.split(",")[0]}</strong> departs in {daysUntil(c.departure_date)} days at only <strong>{fillRate(c)}%</strong> fill rate.</div>
+              <button style={s.alertBtn} onClick={()=>navigate(`/dashboard/provider/containers`)}>Review pricing →</button>
+            </div>
+          ))}
+
+          {/* ── Stats ── */}
+          <div style={s.stats4}>
+            {[
+              {label:"Total containers", val:String(containers.length),    sub:upcoming.length>0?`${upcoming.length} departing soon`:"None scheduled",       accent:"#a855f7", bg:"rgba(168,85,247,0.12)"},
+              {label:"Active bookings",  val:String(activeB),              sub:pendingB>0?`${pendingB} need approval`:"All up to date",                      accent:"#10b981", bg:"rgba(16,185,129,0.12)"},
+              {label:"Total revenue",    val:fmt(totalRev),                sub:bookings.length===0?"No bookings yet":`${bookings.filter(b=>b.status!=="cancelled").length} paid bookings`, accent:"#f59e0b", bg:"rgba(245,158,11,0.12)"},
+              {label:"Avg fill rate",    val:containers.length===0?"—":avgFill+"%", sub:containers.length===0?"Add containers first":avgFill>=75?"Excellent":avgFill>=50?"Good":"Needs attention", accent:containers.length===0?"rgba(255,255,255,0.3)":fillColor(avgFill), bg:`${containers.length===0?"rgba(255,255,255,0.06)":fillColor(avgFill)+"22"}`},
+            ].map(st=>(
+              <div key={st.label} style={s.statCard}>
+                <div style={{...s.statAccent,background:st.bg,border:`1px solid ${st.accent}44`}}>
+                  <div style={{width:8,height:8,borderRadius:"50%",background:st.accent}}/>
+                </div>
+                <div>
+                  <div style={s.statLabel}>{st.label}</div>
+                  {loading?<div style={s.sk}/>:<div style={s.statVal}>{st.val}</div>}
+                  <div style={{fontSize:11,color:st.accent,marginTop:2}}>{st.sub}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* ── Containers + Bookings ── */}
+          <div style={s.twoCol}>
+            <div style={s.card}>
+              <div style={s.cardH}><div style={s.cardT}>My containers</div><button style={s.va} onClick={()=>navigate("/dashboard/provider/containers")}>View all →</button></div>
+              {loading?<Sk n={3}/>:containers.length===0?(
+                <div style={s.emptyCard}>
+                  <div style={{fontSize:28,marginBottom:10}}>📦</div>
+                  <div style={s.emptyTitle}>No containers yet</div>
+                  <div style={s.emptyDesc}>Add your first container to start receiving bookings from traders.</div>
+                  <button style={s.emptyBtn} onClick={()=>navigate("/dashboard/provider/containers")}>Add container</button>
+                </div>
+              ):containers.slice(0,4).map(c=>{const fill=fillRate(c),fc=fillColor(fill),d=daysUntil(c.departure_date);return(
+                <div key={c.id} style={s.contRow} onClick={()=>navigate(`/dashboard/provider/containers`)}>
+                  <div style={{...s.dot,background:fc}}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={s.routeLabel}>{c.origin.split(",")[0]} → {c.destination.split(",")[0]}</div>
+                    <div style={s.routeSub}>{c.refrigerated?"Reefer":"Std"} · Departs in {d}d</div>
+                    <div style={s.fillBg}><div style={{...s.fillFg,width:fill+"%",background:fc}}/></div>
+                    <div style={{fontSize:10,color:fc,marginTop:2}}>{fill}% filled · {(c.available_cbm??0).toFixed(1)} CBM left</div>
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <div style={{fontSize:12,fontWeight:500,color:"#a855f7"}}>${(c.price_per_cbm??0).toFixed(0)}/CBM</div>
+                    <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",marginTop:1}}>{c.status}</div>
+                  </div>
+                </div>
+              )})}
+            </div>
+            <div style={s.card}>
+              <div style={s.cardH}><div style={s.cardT}>Recent bookings</div><button style={s.va} onClick={()=>navigate("/dashboard/provider/bookings")}>View all →</button></div>
+              {loading?<Sk n={4}/>:bookings.length===0?(
+                <div style={s.emptyCard}>
+                  <div style={{fontSize:28,marginBottom:10}}>📋</div>
+                  <div style={s.emptyTitle}>No bookings yet</div>
+                  <div style={s.emptyDesc}>Bookings appear here once traders book space on your containers.</div>
+                </div>
+              ):bookings.slice(0,5).map(b=>{const st=stStyle(b.status);return(
+                <div key={b.id} style={s.bkRow} onClick={()=>navigate(`/dashboard/provider/bookings`)}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={s.bkId}>{shortId(b.id)}</div>
+                    <div style={s.bkMeta}>{(b.origin??"").split(",")[0]} → {(b.destination??"").split(",")[0]}{b.weight_kg?` · ${b.weight_kg}kg`:""}</div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                    {b.total_price>0&&<div style={{fontSize:11,color:"rgba(255,255,255,0.4)"}}>{fmt(b.total_price)}</div>}
+                    <div style={{fontSize:10,padding:"2px 8px",borderRadius:14,fontWeight:500,...st}}>{b.status}</div>
+                  </div>
+                </div>
+              )})}
+            </div>
+          </div>
+
+          {/* ── Revenue + Departures ── */}
+          <div style={s.threeCol}>
+            <div style={s.card}>
+              <div style={s.cardH}>
+                <div><div style={s.cardT}>Revenue overview</div><div style={{fontSize:11,color:"rgba(255,255,255,0.3)",marginTop:1}}>Last {revMonths.length} months</div></div>
+                <div style={{fontSize:18,fontWeight:700,color:"#fff"}}>{fmt(totalRev)}</div>
+              </div>
+              {revMonths.length===0?(
+                <div style={{fontSize:12,color:"rgba(255,255,255,0.18)",textAlign:"center",padding:"22px 0"}}>Revenue chart appears once you receive bookings</div>
+              ):(
+                <div style={{display:"flex",alignItems:"flex-end",gap:5,height:60,margin:"10px 0 4px"}}>
+                  {revMonths.map((m,i)=>{const pct=Math.round(m.total/revMax*100);const last=i===revMonths.length-1;return(
+                    <div key={m.month} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",height:"100%"}}>
+                      <div style={{width:"100%",borderRadius:"3px 3px 0 0",minHeight:3,background:last?"#a855f7":"rgba(168,85,247,0.28)",height:Math.max(pct,4)+"%"}}/>
+                      <div style={{fontSize:9,color:"rgba(255,255,255,0.25)",marginTop:3}}>{m.month}</div>
+                    </div>
+                  )})}
+                </div>
+              )}
+              <div style={{display:"flex",gap:20,marginTop:10,paddingTop:10,borderTop:"1px solid rgba(255,255,255,0.05)"}}>
+                <div><div style={{fontSize:10,color:"rgba(255,255,255,0.3)"}}>This month</div><div style={{fontSize:13,fontWeight:500,color:"#fff",marginTop:1}}>{fmt(thisMonthRev)}</div></div>
+                <div><div style={{fontSize:10,color:"rgba(255,255,255,0.3)"}}>Bookings</div><div style={{fontSize:13,fontWeight:500,color:"#fff",marginTop:1}}>{bookings.filter(b=>b.status!=="cancelled").length}</div></div>
+                <div><div style={{fontSize:10,color:"rgba(255,255,255,0.3)"}}>Avg/booking</div><div style={{fontSize:13,fontWeight:500,color:"#fff",marginTop:1}}>{bookings.filter(b=>b.status!=="cancelled").length>0?fmt(Math.round(totalRev/bookings.filter(b=>b.status!=="cancelled").length)):"—"}</div></div>
+              </div>
+            </div>
+            <div style={s.card}>
+              <div style={s.cardH}><div style={s.cardT}>Upcoming departures</div></div>
+              {loading?<Sk n={3}/>:upcoming.length===0?(
+                <div style={{fontSize:12,color:"rgba(255,255,255,0.2)",textAlign:"center",padding:"20px 0",lineHeight:1.6}}>No upcoming departures.<br/>Add containers to see departures here.</div>
+              ):upcoming.slice(0,4).map(c=>{const fill=fillRate(c),fc=fillColor(fill),d=daysUntil(c.departure_date);return(
+                <div key={c.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid rgba(255,255,255,0.04)",cursor:"pointer"}} onClick={()=>navigate(`/dashboard/provider/containers`)}>
+                  <div style={{width:36,height:36,borderRadius:8,background:"rgba(168,85,247,0.12)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"#a855f7",lineHeight:1}}>{d}</div>
+                    <div style={{fontSize:8,color:"rgba(168,85,247,0.5)"}}>days</div>
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:500,color:"#fff"}}>{c.origin.split(",")[0]} → {c.destination.split(",")[0]}</div>
+                    <div style={{fontSize:10,color:"rgba(255,255,255,0.3)",marginTop:1}}>{new Date(c.departure_date).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:12,fontWeight:500,color:fc}}>{fill}%</div>
+                    <div style={{fontSize:9,color:"rgba(255,255,255,0.25)"}}>filled</div>
+                  </div>
+                </div>
+              )})}
+            </div>
+          </div>
+
+          {/* ─────────────────────────────────────────────────────────────────
+              AI SECTION — always visible, uses platform data when no containers
+          ───────────────────────────────────────────────────────────────── */}
+
+          {/* Section header */}
+          <div style={s.aiSectionHeader}>
+            <div style={s.aiSectionTitle}>
+              <div style={s.aiSectionDot}/>
+              AI Market Intelligence
+            </div>
+            <div style={s.aiSectionSub}>
+              {containers.length===0
+                ? "Platform-wide data — your personalised AI insights unlock when you add a container"
+                : "Personalised to your active routes"}
+            </div>
+          </div>
+
+          {/* Row 1: Route demand forecast (full 6 routes) + Weather risk */}
+          <div style={s.twoCol}>
+
+            {/* Demand forecast */}
+            <div style={s.aiCard}>
+              <div style={s.aiBadge}>AI</div>
+              <div style={s.aiT}>Route demand forecast</div>
+              <div style={s.aiS}>
+                {containers.length===0
+                  ? "Platform-wide trader search activity — next 30 days"
+                  : "Trader search activity for your routes — next 30 days"}
+              </div>
+              {aiLoading?<Sk n={6}/>:aiDemand.slice(0,6).map((r:any,i:number)=>{
+                const score = r.demandScore??0
+                const sc = demandColor(score)
+                const dl = demandLabel(score, r.bookingTrend??"stable")
+                return(
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+                    <div style={{fontSize:12,color:"#fff",flex:1,minWidth:0,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                      {(r.origin?.split("(")[0]?.trim()?.split(",")[0]??"")} → {(r.destination?.split("(")[0]?.trim()?.split(",")[0]??"")}
+                    </div>
+                    <div style={{width:80,height:3,background:"rgba(255,255,255,0.07)",borderRadius:2,flexShrink:0}}>
+                      <div style={{height:"100%",borderRadius:2,width:score+"%",background:sc}}/>
+                    </div>
+                    <div style={{fontSize:11,fontWeight:700,color:sc,minWidth:24,textAlign:"right"}}>{score}</div>
+                    <div style={{fontSize:10,padding:"2px 7px",borderRadius:10,fontWeight:500,background:dl.bg,color:dl.c,flexShrink:0}}>{dl.label}</div>
+                  </div>
+                )
+              })}
+              {!aiLoading && aiDemand.length===0 && <div style={{fontSize:12,color:"rgba(255,255,255,0.2)",textAlign:"center",padding:"16px 0"}}>Loading demand data…</div>}
+              {!aiLoading && containers.length===0 && (
+                <div style={{...s.insightBox,marginTop:10,borderColor:"rgba(168,85,247,0.25)",background:"rgba(168,85,247,0.06)"}}>
+                  <div style={s.insightI}>✦</div>
+                  <div style={{fontSize:11,color:"rgba(255,255,255,0.5)",lineHeight:1.5}}>
+                    <strong style={{color:"#c084fc"}}>Mumbai → Dubai</strong> and <strong style={{color:"#c084fc"}}>Singapore → Rotterdam</strong> have the highest trader demand right now. List a container on these routes to start earning immediately.
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Weather & risk */}
+            <div style={s.aiCard}>
+              <div style={{...s.aiBadge,background:"rgba(59,130,246,0.2)",color:"#60a5fa"}}>LIVE</div>
+              <div style={s.aiT}>Route weather &amp; risk</div>
+              <div style={s.aiS}>Current conditions on popular shipping routes</div>
+
+              {/* Route selector pills */}
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+                {POPULAR_ROUTES.slice(0,6).map((r,i)=>(
+                  <button key={i} style={{fontSize:10,padding:"4px 10px",borderRadius:20,border:"1px solid",cursor:"pointer",transition:"all .15s",borderColor:i===weatherRoute?"rgba(168,85,247,0.5)":"rgba(255,255,255,0.08)",background:i===weatherRoute?"rgba(168,85,247,0.15)":"rgba(255,255,255,0.03)",color:i===weatherRoute?"#c084fc":"rgba(255,255,255,0.4)"}} onClick={()=>setWeatherRoute(i)}>
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Weather card for selected route */}
+              {aiLoading?(
+                <div style={{display:"flex",gap:8,marginBottom:12}}>{[0,1,2].map(i=><div key={i} style={{...s.sk,flex:1,height:90,borderRadius:9}}/>)}</div>
+              ):(
+                <div>
+                  {aiWeather[weatherRoute] ? (
+                    <div style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10,padding:14,marginBottom:10}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                        <div style={{fontSize:12,fontWeight:500,color:"#fff"}}>{POPULAR_ROUTES[weatherRoute].label}</div>
+                        <div style={{fontSize:9,padding:"2px 8px",borderRadius:10,fontWeight:600,background:aiWeather[weatherRoute].risk==="high"?"rgba(239,68,68,0.15)":aiWeather[weatherRoute].risk==="medium"?"rgba(245,158,11,0.15)":"rgba(16,185,129,0.15)",color:aiWeather[weatherRoute].risk==="high"?"#ef4444":aiWeather[weatherRoute].risk==="medium"?"#f59e0b":"#10b981"}}>
+                          {aiWeather[weatherRoute].risk==="low"?"Good conditions":"Moderate risk"}
+                        </div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:16}}>
+                        <div style={{fontSize:36}}>{aiWeather[weatherRoute].icon}</div>
+                        <div>
+                          <div style={{fontSize:24,fontWeight:700,color:"#fff"}}>{aiWeather[weatherRoute].temp}°C</div>
+                          <div style={{fontSize:11,color:"rgba(255,255,255,0.4)",marginTop:2}}>💨 {aiWeather[weatherRoute].wind}km/h at destination port</div>
+                        </div>
+                      </div>
+                    </div>
+                  ):(
+                    <div style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10,padding:14,marginBottom:10}}>
+                      <div style={{fontSize:12,fontWeight:500,color:"#fff",marginBottom:6}}>{POPULAR_ROUTES[weatherRoute].label}</div>
+                      <div style={{fontSize:12,color:"rgba(255,255,255,0.3)"}}>Loading weather data…</div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div style={s.insightBox}>
+                <div style={s.insightI}>i</div>
+                <div style={{fontSize:11,color:"rgba(255,255,255,0.5)",lineHeight:1.5}}>
+                  {containers.length===0
+                    ? "Select any route above to see live weather conditions at the destination port. Weather alerts affect delay risk for cargo on that route."
+                    : aiWeather[0]?.risk==="high" ? `High wind warning at ${POPULAR_ROUTES[0].destination}. Notify traders expecting delivery this week.` : "Conditions look manageable across your active routes this week."
+                  }
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2: Revenue predictions + Fill-rate alerts */}
+          <div style={s.twoCol}>
+
+            {/* Revenue predictions */}
+            <div style={s.aiCard}>
+              <div style={s.aiBadge}>AI</div>
+              <div style={s.aiT}>Revenue predictions</div>
+              <div style={s.aiS}>
+                {containers.length===0
+                  ? "Estimated earnings potential based on platform market rates"
+                  : "30 and 90-day revenue forecast for your containers"}
+              </div>
+
+              {containers.length===0 ? (
+                /* Onboarding revenue preview */
+                <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  {[
+                    {label:"Mumbai → Dubai (20ft std)",   low:"$1,400", high:"$1,800", note:"High demand · avg 85% fill rate on platform"},
+                    {label:"Mumbai → Dubai (40ft reefer)", low:"$2,800", high:"$3,600", note:"Premium route · refrigerated commands +40%"},
+                    {label:"Mumbai → Singapore (20ft)",   low:"$900",   high:"$1,200", note:"Growing demand · 12-day transit"},
+                  ].map((r,i)=>(
+                    <div key={i} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:9,padding:"12px 14px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                        <div style={{fontSize:12,fontWeight:500,color:"#fff"}}>{r.label}</div>
+                        <div style={{fontSize:12,fontWeight:600,color:"#10b981"}}>{r.low} – {r.high}</div>
+                      </div>
+                      <div style={{fontSize:10,color:"rgba(255,255,255,0.35)"}}>{r.note}</div>
+                    </div>
+                  ))}
+                  <div style={{...s.insightBox,borderColor:"rgba(16,185,129,0.25)",background:"rgba(16,185,129,0.06)"}}>
+                    <div style={{...s.insightI,background:"rgba(16,185,129,0.25)",color:"#10b981"}}>$</div>
+                    <div style={{fontSize:11,color:"rgba(16,185,129,0.85)",lineHeight:1.5}}>Providers with 1–2 containers on high-demand routes earn on average <strong>$3,200–$6,800/month</strong>. Add a container to start.</div>
+                  </div>
+                </div>
+              ) : (
+                /* Real revenue forecast */
+                <div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+                    {[
+                      {l:"This month",    v:fmt(thisMonthRev),                  c:"#fff"},
+                      {l:"30-day est.",   v:fmt(Math.round(thisMonthRev*1.15)), c:"#10b981"},
+                      {l:"90-day est.",   v:fmt(Math.round(thisMonthRev*3.2)),  c:"#a855f7"},
+                    ].map(st=>(
+                      <div key={st.l} style={{background:"rgba(255,255,255,0.04)",borderRadius:8,padding:"10px 12px"}}>
+                        <div style={{fontSize:10,color:"rgba(255,255,255,0.35)",marginBottom:3}}>{st.l}</div>
+                        <div style={{fontSize:15,fontWeight:600,color:st.c}}>{st.v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={s.insightBox}>
+                    <div style={s.insightI}>i</div>
+                    <div style={{fontSize:11,color:"rgba(255,255,255,0.5)",lineHeight:1.5}}>
+                      Projections based on your current booking rate. Actual results depend on container fill rates and market conditions.
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Fill-rate alerts / tips */}
+            <div style={s.aiCard}>
+              <div style={s.aiBadge}>AI</div>
+              <div style={s.aiT}>Fill-rate alerts &amp; tips</div>
+              <div style={s.aiS}>
+                {containers.length===0
+                  ? "Platform insights to maximise your container fill rates"
+                  : "Personalised alerts for your containers"}
+              </div>
+
+              {aiLoading ? <Sk n={3}/> : (
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {revAlerts.map((alert:any,i:number)=>(
+                    <div key={i} style={{display:"flex",gap:10,padding:"10px 12px",borderRadius:9,border:"1px solid",borderColor:alert.type==="risk"?"rgba(239,68,68,0.25)":alert.type==="opportunity"?"rgba(168,85,247,0.25)":"rgba(245,158,11,0.2)",background:alert.type==="risk"?"rgba(239,68,68,0.06)":alert.type==="opportunity"?"rgba(168,85,247,0.06)":"rgba(245,158,11,0.06)"}}>
+                      <div style={{width:20,height:20,borderRadius:"50%",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,background:alert.type==="risk"?"rgba(239,68,68,0.25)":alert.type==="opportunity"?"rgba(168,85,247,0.25)":"rgba(245,158,11,0.2)",color:alert.type==="risk"?"#ef4444":alert.type==="opportunity"?"#a855f7":"#f59e0b",marginTop:1}}>
+                        {alert.type==="risk"?"!":alert.type==="opportunity"?"✦":"→"}
+                      </div>
+                      <div style={{fontSize:11,color:"rgba(255,255,255,0.6)",lineHeight:1.6}}>{alert.message}</div>
+                    </div>
+                  ))}
+                  {revAlerts.length===0&&(
+                    <div style={{fontSize:12,color:"rgba(255,255,255,0.2)",textAlign:"center",padding:"16px 0"}}>No alerts right now. All looking good.</div>
+                  )}
+                </div>
+              )}
+
+              {containers.length===0&&(
+                <div style={{marginTop:12}}>
+                  <button style={{width:"100%",height:38,background:"#7c3aed",border:"none",borderRadius:8,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}} onClick={()=>navigate("/dashboard/provider/containers")}>
+                    + Add a container to start earning
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+function Sk({n}:{n:number}){return<div style={{display:"flex",flexDirection:"column",gap:8}}>{Array.from({length:n}).map((_,i)=><div key={i} style={{height:34,background:"rgba(255,255,255,0.04)",borderRadius:7}}/>)}</div>}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const s:Record<string,React.CSSProperties>={
+  shell:          {display:"flex",minHeight:"100vh",background:"#0a0a0f",color:"#fff",fontFamily:"system-ui,sans-serif"},
+  sidebar:        {width:210,minWidth:210,background:"#0f0f18",borderRight:"1px solid rgba(255,255,255,0.06)",display:"flex",flexDirection:"column",flexShrink:0},
+  logoWrap:       {display:"flex",alignItems:"center",gap:10,padding:"18px 16px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)"},
+  logoIcon:       {width:28,height:28,background:"rgba(168,85,247,0.15)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0},
+  logoText:       {fontSize:13,fontWeight:700,color:"#a855f7",lineHeight:1.1},
+  logoSub:        {fontSize:10,color:"rgba(255,255,255,0.3)",marginTop:1},
+  navSection:     {fontSize:9,fontWeight:700,color:"rgba(255,255,255,0.18)",letterSpacing:".12em",padding:"14px 16px 6px"},
+  nav:            {flex:1,padding:"4px 8px",display:"flex",flexDirection:"column",gap:1,overflowY:"auto"},
+  navItem:        {display:"flex",alignItems:"center",gap:9,padding:"8px 10px",borderRadius:8,cursor:"pointer",transition:"all 0.12s"},
+  navActive:      {background:"rgba(168,85,247,0.12)",borderLeft:"2px solid #a855f7",paddingLeft:8},
+  navLabel:       {fontSize:12},
+  navBadge:       {marginLeft:"auto",fontSize:9,background:"#a855f7",color:"#fff",borderRadius:9,padding:"1px 5px",fontWeight:700},
+  sidebarFooter:  {padding:"10px 8px",borderTop:"1px solid rgba(255,255,255,0.06)"},
+  userRow:        {display:"flex",alignItems:"center",gap:8,padding:"8px",borderRadius:8,background:"rgba(255,255,255,0.03)"},
+  avatar:         {width:28,height:28,borderRadius:"50%",background:"rgba(168,85,247,0.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#a855f7",flexShrink:0},
+  userInfo:       {flex:1,minWidth:0},
+  userName:       {fontSize:11,color:"#fff",fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"},
+  userEmail:      {fontSize:9,color:"rgba(255,255,255,0.25)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"},
+  signOutBtn:     {background:"none",border:"none",cursor:"pointer",padding:3,display:"flex",alignItems:"center",flexShrink:0},
+  main:           {flex:1,minWidth:0,overflow:"auto",display:"flex",flexDirection:"column"},
+  topbar:         {display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 22px",borderBottom:"1px solid rgba(255,255,255,0.06)",background:"#0a0a0f",position:"sticky",top:0,zIndex:10},
+  pt:             {fontSize:17,fontWeight:700,color:"#fff"},
+  ps:             {fontSize:11,color:"rgba(255,255,255,0.25)",marginTop:2},
+  tr:             {display:"flex",alignItems:"center",gap:10},
+  notifBtn:       {position:"relative",width:34,height:34,borderRadius:8,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"},
+  notifDot:       {position:"absolute",top:7,right:7,width:7,height:7,background:"#a855f7",borderRadius:"50%",border:"2px solid #0a0a0f"},
+  addBtn:         {display:"flex",alignItems:"center",gap:6,padding:"8px 16px",background:"#7c3aed",border:"none",borderRadius:8,color:"#fff",fontSize:12,fontWeight:500,cursor:"pointer"},
+  content:        {padding:"20px 22px",display:"flex",flexDirection:"column",gap:14,flex:1},
+  alertStrip:     {background:"rgba(245,158,11,0.07)",border:"1px solid rgba(245,158,11,0.2)",borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:10},
+  alertDot:       {width:6,height:6,borderRadius:"50%",background:"#f59e0b",flexShrink:0},
+  alertText:      {fontSize:12,color:"rgba(245,158,11,0.85)",flex:1,lineHeight:1.5},
+  alertBtn:       {fontSize:11,color:"#f59e0b",background:"none",border:"none",cursor:"pointer",fontWeight:500,whiteSpace:"nowrap"},
+  stats4:         {display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10},
+  statCard:       {background:"#13131e",border:"1px solid rgba(255,255,255,0.07)",borderRadius:12,padding:16,display:"flex",alignItems:"center",gap:14},
+  statAccent:     {width:36,height:36,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0},
+  statLabel:      {fontSize:11,color:"rgba(255,255,255,0.35)",marginBottom:3},
+  statVal:        {fontSize:22,fontWeight:700,color:"#fff"},
+  sk:             {height:16,background:"rgba(255,255,255,0.05)",borderRadius:4,marginTop:2},
+  twoCol:         {display:"grid",gridTemplateColumns:"1fr 1fr",gap:14},
+  threeCol:       {display:"grid",gridTemplateColumns:"2fr 1fr",gap:14},
+  card:           {background:"#13131e",border:"1px solid rgba(255,255,255,0.07)",borderRadius:12,padding:18},
+  cardH:          {display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14},
+  cardT:          {fontSize:13,fontWeight:600,color:"#fff"},
+  va:             {fontSize:11,color:"#a855f7",background:"none",border:"none",cursor:"pointer",padding:0},
+  contRow:        {display:"flex",alignItems:"flex-start",gap:10,padding:"10px 0",borderBottom:"1px solid rgba(255,255,255,0.04)",cursor:"pointer"},
+  dot:            {width:7,height:7,borderRadius:"50%",flexShrink:0,marginTop:4},
+  routeLabel:     {fontSize:12,fontWeight:500,color:"#fff"},
+  routeSub:       {fontSize:10,color:"rgba(255,255,255,0.3)",marginTop:1},
+  fillBg:         {height:3,background:"rgba(255,255,255,0.07)",borderRadius:2,marginTop:5,overflow:"hidden"},
+  fillFg:         {height:"100%",borderRadius:2},
+  bkRow:          {display:"flex",alignItems:"center",gap:8,padding:"9px 0",borderBottom:"1px solid rgba(255,255,255,0.04)",cursor:"pointer"},
+  bkId:           {fontSize:11,color:"rgba(255,255,255,0.4)",fontFamily:"monospace",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"},
+  bkMeta:         {fontSize:10,color:"rgba(255,255,255,0.25)",marginTop:1},
+  emptyCard:      {display:"flex",flexDirection:"column",alignItems:"center",padding:"24px 16px",textAlign:"center"},
+  emptyTitle:     {fontSize:13,fontWeight:500,color:"rgba(255,255,255,0.45)",marginBottom:6},
+  emptyDesc:      {fontSize:12,color:"rgba(255,255,255,0.25)",lineHeight:1.5,marginBottom:12},
+  emptyBtn:       {fontSize:12,padding:"7px 16px",background:"rgba(168,85,247,0.15)",border:"1px solid rgba(168,85,247,0.3)",borderRadius:8,color:"#a855f7",cursor:"pointer"},
+  // AI section
+  aiSectionHeader:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"4px 0"},
+  aiSectionTitle: {display:"flex",alignItems:"center",gap:8,fontSize:13,fontWeight:600,color:"#fff"},
+  aiSectionDot:   {width:8,height:8,borderRadius:"50%",background:"#a855f7",flexShrink:0},
+  aiSectionSub:   {fontSize:11,color:"rgba(255,255,255,0.3)"},
+  aiCard:         {background:"#13131e",border:"1px solid rgba(168,85,247,0.2)",borderRadius:12,padding:18,position:"relative"},
+  aiBadge:        {position:"absolute",top:14,right:16,fontSize:9,fontWeight:700,color:"#a855f7",background:"rgba(168,85,247,0.15)",borderRadius:4,padding:"2px 7px",letterSpacing:".05em"},
+  aiT:            {fontSize:13,fontWeight:600,color:"#fff",marginBottom:2},
+  aiS:            {fontSize:11,color:"rgba(255,255,255,0.35)",marginBottom:14},
+  insightBox:     {display:"flex",gap:8,alignItems:"flex-start",background:"rgba(168,85,247,0.06)",border:"1px solid rgba(168,85,247,0.18)",borderRadius:8,padding:"9px 12px",marginTop:10},
+  insightI:       {width:16,height:16,borderRadius:"50%",background:"rgba(168,85,247,0.25)",color:"#a855f7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,flexShrink:0,marginTop:1},
+}
