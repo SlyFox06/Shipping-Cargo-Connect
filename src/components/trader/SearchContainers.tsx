@@ -540,10 +540,10 @@ export const SearchContainers = ({ onBookContainer, onAskQuestion }: SearchConta
                         ⚠️ Booking Closed
                       </Badge>
                     ) : (
-                      <Badge variant={container.status === "available" ? "default" : "secondary"}>
-                        {container.status === "available" && container.utilization_rate > 0 && container.utilization_rate < 100
+                      <Badge variant={(container.status === "available" || container.status === "active") ? "default" : "secondary"}>
+                        {(container.status === "available" || container.status === "active") && (container.utilization_rate > 0 && container.utilization_rate < 100)
                           ? "🟡 Shared Space"
-                          : container.status === "available"
+                          : (container.status === "available" || container.status === "active")
                           ? "🟢 Available"
                           : "🔴 Fully Booked"}
                       </Badge>
@@ -585,7 +585,7 @@ export const SearchContainers = ({ onBookContainer, onAskQuestion }: SearchConta
                   </div>
                   <Progress value={container.utilization_rate} className="h-2" />
                   <p className="text-xs text-muted-foreground mt-1">
-                    {container.available_volume_m3?.toFixed(2)} m³ available
+                    {(container.available_cbm ?? container.available_volume_m3)?.toFixed(2)} m³ available
                   </p>
                 </div>
               )}
@@ -623,18 +623,18 @@ export const SearchContainers = ({ onBookContainer, onAskQuestion }: SearchConta
                 )}
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Box className="h-4 w-4" />
-                  <span>Volume: {container.available_volume_m3?.toFixed(2) || 'N/A'} m³</span>
+                  <span>Volume: {(container.available_cbm ?? container.available_volume_m3)?.toFixed(2) || 'N/A'} m³</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Package className="h-4 w-4" />
-                  <span>Weight: {(container.available_weight_kg || container.capacity_kg).toLocaleString()} kg</span>
+                  <span>Weight: {(container.available_weight_kg ?? container.max_weight_kg ?? container.capacity_kg)?.toLocaleString()} kg</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm font-semibold text-primary">
                   <DollarSign className="h-4 w-4" />
                   <span>
-                    {container.price_per_m3 
-                      ? `${container.currency || 'USD'} ${container.price_per_m3}/m³` 
-                      : `${container.currency || 'USD'} ${container.price_usd.toLocaleString()}`}
+                    {container.price_per_cbm || container.price_per_m3 
+                      ? `$${container.price_per_cbm || container.price_per_m3}/m³` 
+                      : `$${container.price_usd?.toLocaleString() || 0}`}
                   </span>
                 </div>
               </div>

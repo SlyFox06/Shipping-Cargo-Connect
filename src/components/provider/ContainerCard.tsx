@@ -25,9 +25,15 @@ export const ContainerCard = ({ container, onEdit, onView, onDelete }: Container
   };
 
   const utilizationRate = container.utilization_rate || 0;
-  const availableVolume = container.available_volume_m3 || container.total_volume_m3;
-  const availableWeight = container.available_weight_kg || container.capacity_kg;
+  const maxCBM = container.max_cbm ?? container.total_volume_m3 ?? 0;
+  const availableVolume = container.available_cbm ?? container.available_volume_m3 ?? maxCBM;
+  
+  const maxWeight = container.max_weight_kg ?? container.capacity_kg ?? 0;
+  const availableWeight = container.available_weight_capacity_kg ?? container.available_weight_kg ?? maxWeight;
+  
   const remainingPercentage = 100 - utilizationRate;
+  const isShared = container.shared_booking_enabled || container.accepts_partial_bookings;
+  const isActive = container.status === "available" || container.status === "active";
 
   // Color coding based on remaining capacity
   const getUtilizationColor = () => {
@@ -49,14 +55,14 @@ export const ContainerCard = ({ container, onEdit, onView, onDelete }: Container
           <div className="flex-1">
             <h3 className="text-lg font-semibold">{container.container_type}</h3>
             <div className="flex gap-2 mt-2">
-              {container.status === "available" && utilizationRate > 0 && utilizationRate < 100 ? (
+              {isActive && utilizationRate > 0 && utilizationRate < 100 ? (
                 <Badge className="bg-warning/20 text-warning border-warning/30">Partially Booked</Badge>
-              ) : container.status === "available" ? (
+              ) : isActive ? (
                 <Badge className="bg-success/20 text-success border-success/30">Available</Badge>
               ) : (
                 <Badge className="bg-destructive/20 text-destructive border-destructive/30">Fully Booked</Badge>
               )}
-              {container.shared_booking_enabled && (
+              {isShared && (
                 <Badge className="bg-primary/20 text-primary border-primary/30">Shared</Badge>
               )}
             </div>
@@ -93,7 +99,7 @@ export const ContainerCard = ({ container, onEdit, onView, onDelete }: Container
             </div>
             <div>
               <p className="text-muted-foreground">Total Capacity</p>
-              <p className="font-semibold">{container.total_volume_m3?.toFixed(2)} m³</p>
+              <p className="font-semibold">{maxCBM?.toFixed(2)} m³</p>
             </div>
           </div>
           {utilizationRate >= 80 && (
@@ -120,7 +126,7 @@ export const ContainerCard = ({ container, onEdit, onView, onDelete }: Container
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Calendar className="h-4 w-4" />
             <span>
-              {format(new Date(container.available_from), "MMM dd")} - {format(new Date(container.available_until), "MMM dd, yyyy")}
+              {format(new Date(container.departure_date || container.available_from || container.created_at), "MMM dd")} - {format(new Date(container.arrival_date || container.available_until || new Date(Date.now()+86400000*30)), "MMM dd, yyyy")}
             </span>
           </div>
           <div className="flex items-center gap-2 text-xs text-[#A1A1AA]">
@@ -138,9 +144,9 @@ export const ContainerCard = ({ container, onEdit, onView, onDelete }: Container
           <div className="flex items-center gap-2 text-sm font-semibold">
             <DollarSign className="h-4 w-4" />
             <span>
-              {container.price_per_m3 
-                ? `${container.currency || 'USD'} ${container.price_per_m3}/m³` 
-                : `${container.currency || 'USD'} ${container.price_usd.toLocaleString()}`}
+              {container.price_per_cbm || container.price_per_m3 
+                ? `$${container.price_per_cbm || container.price_per_m3}/m³` 
+                : `$${container.price_usd?.toLocaleString() || 0}`}
             </span>
           </div>
         </div>
