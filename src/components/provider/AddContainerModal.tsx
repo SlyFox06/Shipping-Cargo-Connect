@@ -5,14 +5,13 @@ import { ContainerDocRequirements } from "@/components/provider/ContainerDocRequ
 import type { RequiredDoc } from "@/components/provider/ContainerDocRequirements"
 
 const CONTAINER_TYPES = [
-  { value:"20ft_standard",  label:"20ft Standard",  icon:"📦", cbm:33,  maxKg:28000, desc:"General use" },
-  { value:"40ft_standard",  label:"40ft Standard",  icon:"🚢", cbm:67,  maxKg:30480, desc:"Most common" },
-  { value:"40ft_high_cube", label:"40ft High Cube",  icon:"⬆️", cbm:76,  maxKg:30480, desc:"Extra height" },
-  { value:"20ft_reefer",    label:"20ft Reefer",     icon:"❄️", cbm:28,  maxKg:27700, desc:"Temperature controlled" },
-  { value:"40ft_reefer",    label:"40ft Reefer",     icon:"🧊", cbm:60,  maxKg:27700, desc:"Large cold chain" },
-  { value:"flat_rack",      label:"Flat Rack",       icon:"🏗️", cbm:40,  maxKg:40000, desc:"Oversized cargo" },
-  { value:"open_top",       label:"Open Top",        icon:"🔓", cbm:66,  maxKg:30480, desc:"Crane loading" },
-  { value:"tank",           label:"Tank Container",  icon:"🛢️", cbm:0,   maxKg:0,     desc:"Liquids/gas" },
+  { value:"standard_20",      label:"20ft Standard",  icon:"📦", cbm:33,  maxKg:28000, desc:"General use" },
+  { value:"standard_40",      label:"40ft Standard",  icon:"🚢", cbm:67,  maxKg:30480, desc:"Most common" },
+  { value:"high_cube_40",     label:"40ft High Cube", icon:"⬆️", cbm:76,  maxKg:30480, desc:"Extra height" },
+  { value:"refrigerated_20",  label:"20ft Reefer",    icon:"❄️", cbm:28,  maxKg:27700, desc:"Temperature controlled" },
+  { value:"refrigerated_40",  label:"40ft Reefer",    icon:"🧊", cbm:60,  maxKg:27700, desc:"Large cold chain" },
+  { value:"flat_rack",        label:"Flat Rack",      icon:"🏗️", cbm:40,  maxKg:40000, desc:"Oversized cargo" },
+  { value:"open_top",         label:"Open Top",       icon:"🔓", cbm:66,  maxKg:30480, desc:"Crane loading" },
 ]
 const TRANSPORT_MODES = [
   { value:"sea", label:"Sea freight", icon:"🚢" }, { value:"air", label:"Air freight", icon:"✈️" },
@@ -39,7 +38,7 @@ export function AddContainerModal({ open, onClose, onSuccess, providerId }: Prop
   const [transitPort, setTransitPort]     = useState("")
 
   // Step 2
-  const [containerType, setContainerType] = useState("40ft_standard")
+  const [containerType, setContainerType] = useState("standard_40")
   const [cargoType, setCargoType]         = useState("general")
   const [maxCBM, setMaxCBM]               = useState("")
   const [maxWeightKg, setMaxWeightKg]     = useState("")
@@ -67,7 +66,7 @@ export function AddContainerModal({ open, onClose, onSuccess, providerId }: Prop
   const [error, setError]     = useState("")
 
   useEffect(() => {
-    if (!open) setTimeout(() => { setStep(1); setOrigin(""); setDestination(""); setDepartureDate(""); setArrivalDate(""); setContainerType("40ft_standard"); setCargoType("general"); setMaxCBM(""); setMaxWeightKg(""); setRefrigerated(false); setHazmat(false); setPricePerCBM(""); setAiPrice(null); setNotes(""); setRequiredDocs([]); setError("") }, 200)
+    if (!open) setTimeout(() => { setStep(1); setOrigin(""); setDestination(""); setDepartureDate(""); setArrivalDate(""); setContainerType("standard_40"); setCargoType("general"); setMaxCBM(""); setMaxWeightKg(""); setRefrigerated(false); setHazmat(false); setPricePerCBM(""); setAiPrice(null); setNotes(""); setRequiredDocs([]); setError("") }, 200)
   }, [open])
 
   useEffect(() => {
