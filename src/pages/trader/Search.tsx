@@ -4,7 +4,7 @@ import TraderLayout from "@/components/layout/TraderLayout";
 import { supabase } from "@/integrations/supabase/client";
 import { getUserRole } from "@/lib/auth";
 import SearchContainers from "./SearchContainers";
-import { EnhancedBookingModal } from "@/components/trader/EnhancedBookingModal";
+import { BookingModal } from "@/components/trader/BookingModal";
 import { PreBookingChatModal } from "@/components/chat/PreBookingChatModal";
 
 const Search = () => {
@@ -17,15 +17,9 @@ const Search = () => {
   useEffect(() => {
     const checkAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        navigate('/auth');
-        return;
-      }
+      if (!session) { navigate('/auth'); return; }
       const { role } = await getUserRole(session.user.id);
-      if (role !== 'trader') {
-        navigate('/dashboard');
-        return;
-      }
+      if (role !== 'trader') { navigate('/dashboard'); return; }
       setTraderId(session.user.id);
     };
     checkAuth();
@@ -43,37 +37,26 @@ const Search = () => {
 
   return (
     <TraderLayout>
-      <div className="space-y-6">
+      <SearchContainers
+        onBookContainer={handleBookContainer}
+        onAskQuestion={handleAskQuestion}
+      />
 
-
-        <SearchContainers 
-          onBookContainer={handleBookContainer}
-          onAskQuestion={handleAskQuestion}
-        />
-      </div>
+      <BookingModal
+        open={showBookingModal}
+        onClose={() => { setShowBookingModal(false); setSelectedContainer(null); }}
+        onSuccess={() => navigate('/dashboard/trader/bookings')}
+        container={selectedContainer}
+        traderId={traderId}
+      />
 
       {selectedContainer && (
-        <>
-          <EnhancedBookingModal
-            open={showBookingModal}
-            onClose={() => {
-              setShowBookingModal(false);
-              setSelectedContainer(null);
-            }}
-            onSuccess={() => {
-              navigate('/dashboard/trader/bookings');
-            }}
-            container={selectedContainer}
-            traderId={traderId}
-          />
-
-          <PreBookingChatModal
-            container={selectedContainer}
-            open={showChatModal}
-            onOpenChange={setShowChatModal}
-            currentUserId={traderId}
-          />
-        </>
+        <PreBookingChatModal
+          container={selectedContainer}
+          open={showChatModal}
+          onOpenChange={setShowChatModal}
+          currentUserId={traderId}
+        />
       )}
     </TraderLayout>
   );

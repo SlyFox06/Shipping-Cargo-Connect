@@ -38,11 +38,13 @@ import ProviderPayments from "./pages/provider/Payments";
 import ProviderEarnings from "./pages/provider/Earnings";
 import ProviderRevenue from "./pages/provider/Revenue";
 import ProviderSettings from "./pages/provider/Settings";
+import ProviderBookingDetail from "./pages/provider/ProviderBookingDetail";
 
 // Trader pages
 import TraderSearch from "./pages/trader/Search";
 import TraderAuctions from "./pages/trader/Auctions";
 import TraderBookings from "./pages/trader/Bookings";
+import TraderBookingDetail from "./pages/trader/BookingDetail";
 import TraderDocuments from "./pages/trader/Documents";
 import TraderPayments from "./pages/trader/Payments";
 import TraderInvoices from "./pages/trader/Invoices";
@@ -81,6 +83,7 @@ const App = () => (
           <Route path="/dashboard/provider" element={<ProviderDashboard />} />
           <Route path="/dashboard/provider/containers" element={<ProviderContainers />} />
           <Route path="/dashboard/provider/bookings" element={<ProviderBookings />} />
+          <Route path="/dashboard/provider/bookings/:id" element={<ProviderBookingDetail />} />
           <Route path="/dashboard/provider/payments" element={<ProviderPayments />} />
           <Route path="/dashboard/provider/earnings" element={<ProviderEarnings />} />
           <Route path="/dashboard/provider/revenue" element={<ProviderRevenue />} />
@@ -93,6 +96,7 @@ const App = () => (
           <Route path="/dashboard/trader/search" element={<TraderSearch />} />
           <Route path="/dashboard/trader/auctions" element={<TraderAuctions />} />
           <Route path="/dashboard/trader/bookings" element={<TraderBookings />} />
+          <Route path="/dashboard/trader/bookings/:id" element={<TraderBookingDetail />} />
           <Route path="/dashboard/trader/documents" element={<TraderDocuments />} />
           <Route path="/dashboard/trader/payments" element={<TraderPayments />} />
           <Route path="/dashboard/trader/invoices" element={<TraderInvoices />} />
